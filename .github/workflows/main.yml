@@ -1122,7 +1122,7 @@ jobs:
           grep -q 'wss://socket.india.delta.exchange' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
           grep -q 'productId > 0' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
           grep -q 'reduce_only' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
-          grep -q 'position.qty < qty' app/src/main/java/com/cryptoalertengine/service/TradingService.kt
+          grep -q 'position.qty < totalQty' app/src/main/java/com/cryptoalertengine/service/TradingService.kt
           grep -q 'sessionRefreshJob' app/src/main/java/com/cryptoalertengine/service/TradingService.kt
           grep -q 'orderByClientId' app/src/main/java/com/cryptoalertengine/service/TradingService.kt
           grep -q 'AUTO TRADING DISARMED: no new entries' app/src/main/java/com/cryptoalertengine/service/TradingService.kt
