@@ -1379,57 +1379,81 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f app/build.gradle.kts
-          test -f app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
-          test -f app/src/main/java/com/cryptoalertengine/service/TradingService.kt
-          grep -q 'versionName = "4.3.2"' app/build.gradle.kts
-          grep -q 'inner class PrivateConnection' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
-          grep -q 'this@DeltaTradingApi.signedTimestampSeconds()' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
-          grep -q 'wss://socket.india.delta.exchange' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
-          grep -q 'productId > 0' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
-          grep -q 'reduce_only' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
-          grep -q 'internal fun buildSignatureMessage' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
-          grep -q 'return method + timestamp + path + signedQuery + body' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
-          grep -q 'val wirePath = httpUrl.encodedPath' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
-          grep -q 'val wireQuery = httpUrl.encodedQuery ?: ""' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
-          grep -q '(b.toInt() and 0xff).toString(16).padStart(2, '''0''')' app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt
-          grep -q 'putString("api_secret", encrypt(apiSecret.trim()))' app/src/main/java/com/cryptoalertengine/data/SecureCredentialStore.kt
-          grep -q 'let(::decrypt)?.trim()' app/src/main/java/com/cryptoalertengine/data/SecureCredentialStore.kt
-          grep -q 'secure.save(key.trim(), secret.trim())' app/src/main/java/com/cryptoalertengine/MainActivity.kt
-          test -f app/src/test/java/com/cryptoalertengine/trading/DeltaTradingApiSignatureTest.kt
-          grep -q 'position.qty < totalQty' app/src/main/java/com/cryptoalertengine/service/TradingService.kt
-          grep -q 'sessionRefreshJob' app/src/main/java/com/cryptoalertengine/service/TradingService.kt
-          grep -q 'orderByClientId' app/src/main/java/com/cryptoalertengine/service/TradingService.kt
-          grep -q 'AUTO TRADING DISARMED: no new entries' app/src/main/java/com/cryptoalertengine/service/TradingService.kt
-          ! grep -q 'ORDER BOOK' app/src/main/java/com/cryptoalertengine/MainActivity.kt
-          ! grep -q '"ASK"' app/src/main/java/com/cryptoalertengine/MainActivity.kt
-          ! grep -q '"BID"' app/src/main/java/com/cryptoalertengine/MainActivity.kt
-
-          grep -q 'val symbol: String = "ETHUSD"' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val tradingTimeframe: String = "5m"' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val mtf2: String = "15m"' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val mtf3: String = "1h"' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val autoReconnect30m: Boolean = true' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val fastEmaEntryOffset: Double = 0.2' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val slowEmaEntryOffset: Double = 0.2' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val minEmaEntryDistance: Double = 5.0' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val emaFastPeriod: Int = 8' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val emaSlowPeriod: Int = 19' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val atrFilterThreshold: Double = 4.0' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          ! grep -q 'config.atrFilterEnabled.*atrFilterThreshold' app/src/main/java/com/cryptoalertengine/engine/AlertEngine.kt
-          grep -q 'atrThresholdDoesNotBlockAlerts' app/src/test/java/com/cryptoalertengine/engine/AlertEngineTest.kt
-          grep -q 'val stEntryOffset: Double = 0.2' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val emaMaxSlDistance: Double = 10.0' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val haltCrossCount: Int = 5' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val priceUpdate10mEnabled: Boolean = true' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'val widgetLivePriceEnabled: Boolean = false' app/src/main/java/com/cryptoalertengine/data/Models.kt
-          grep -q 'EMA COMBINED PROTECTION ACTIVE' app/src/main/java/com/cryptoalertengine/service/TradingService.kt
-          grep -q 'val generation = System.currentTimeMillis()' app/src/main/java/com/cryptoalertengine/service/TradingService.kt
-          grep -q 'weightedAverageEntry' app/src/main/java/com/cryptoalertengine/engine/TradingRules.kt
-          grep -q 'CLOSE SELECTED POSITION' app/src/main/java/com/cryptoalertengine/MainActivity.kt
-          grep -q 'CANCEL SELECTED' app/src/main/java/com/cryptoalertengine/MainActivity.kt
-          grep -q 'CANCEL ALL' app/src/main/java/com/cryptoalertengine/MainActivity.kt
-
+          python3 - <<'PY'
+          from pathlib import Path
+          checks = {
+              'app/build.gradle.kts': ['versionName = "4.3.2"'],
+              'app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt': [
+                  'inner class PrivateConnection',
+                  'this@DeltaTradingApi.signedTimestampSeconds()',
+                  'wss://socket.india.delta.exchange',
+                  'productId > 0',
+                  'reduce_only',
+                  'internal fun buildSignatureMessage',
+                  'return method + timestamp + path + signedQuery + body',
+                  'val wirePath = httpUrl.encodedPath',
+                  'val wireQuery = httpUrl.encodedQuery ?: ""',
+                  "(b.toInt() and 0xff).toString(16).padStart(2, '0')",
+              ],
+              'app/src/main/java/com/cryptoalertengine/data/SecureCredentialStore.kt': [
+                  'putString("api_secret", encrypt(apiSecret.trim()))',
+                  'let(::decrypt)?.trim()',
+              ],
+              'app/src/main/java/com/cryptoalertengine/MainActivity.kt': [
+                  'secure.save(key.trim(), secret.trim())',
+                  'CLOSE SELECTED POSITION',
+                  'CANCEL SELECTED',
+                  'CANCEL ALL',
+              ],
+              'app/src/main/java/com/cryptoalertengine/service/TradingService.kt': [
+                  'position.qty < totalQty',
+                  'sessionRefreshJob',
+                  'orderByClientId',
+                  'AUTO TRADING DISARMED: no new entries',
+                  'EMA COMBINED PROTECTION ACTIVE',
+                  'val generation = System.currentTimeMillis()',
+              ],
+              'app/src/main/java/com/cryptoalertengine/data/Models.kt': [
+                  'val symbol: String = "ETHUSD"',
+                  'val tradingTimeframe: String = "5m"',
+                  'val mtf2: String = "15m"',
+                  'val mtf3: String = "1h"',
+                  'val autoReconnect30m: Boolean = true',
+                  'val fastEmaEntryOffset: Double = 0.2',
+                  'val slowEmaEntryOffset: Double = 0.2',
+                  'val minEmaEntryDistance: Double = 5.0',
+                  'val emaFastPeriod: Int = 8',
+                  'val emaSlowPeriod: Int = 19',
+                  'val atrFilterThreshold: Double = 4.0',
+                  'val stEntryOffset: Double = 0.2',
+                  'val emaMaxSlDistance: Double = 10.0',
+                  'val haltCrossCount: Int = 5',
+                  'val priceUpdate10mEnabled: Boolean = true',
+                  'val widgetLivePriceEnabled: Boolean = false',
+              ],
+              'app/src/main/java/com/cryptoalertengine/engine/TradingRules.kt': ['weightedAverageEntry'],
+          }
+          for rel, needles in checks.items():
+              p = Path(rel)
+              if not p.is_file():
+                  raise SystemExit(f'Missing required source file: {rel}')
+              s = p.read_text(encoding='utf-8')
+              for needle in needles:
+                  if needle not in s:
+                      raise SystemExit(f'Missing invariant: {needle!r} in {rel}')
+          main = Path('app/src/main/java/com/cryptoalertengine/MainActivity.kt').read_text(encoding='utf-8')
+          for forbidden in ('ORDER BOOK', '"ASK"', '"BID"'):
+              if forbidden in main:
+                  raise SystemExit(f'Forbidden order-book UI marker found: {forbidden!r}')
+          alert = Path('app/src/main/java/com/cryptoalertengine/engine/AlertEngine.kt').read_text(encoding='utf-8')
+          if 'config.atrFilterEnabled' in alert and 'atrFilterThreshold' in alert:
+              raise SystemExit('ATR entry filter leaked into AlertEngine')
+          if not Path('app/src/test/java/com/cryptoalertengine/trading/DeltaTradingApiSignatureTest.kt').is_file():
+              raise SystemExit('Missing DeltaTradingApiSignatureTest.kt')
+          if 'atrThresholdDoesNotBlockAlerts' not in Path('app/src/test/java/com/cryptoalertengine/engine/AlertEngineTest.kt').read_text(encoding='utf-8'):
+              raise SystemExit('Missing ATR alert regression test')
+          print('All V4.3.2 source invariants passed.')
+          PY
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
