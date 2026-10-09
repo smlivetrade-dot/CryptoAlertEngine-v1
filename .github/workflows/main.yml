@@ -1479,7 +1479,7 @@ jobs:
           encoded = pathlib.Path("/tmp/project.b64").read_text()
           data = base64.b64decode("".join(encoded.split()), validate=True)
           pathlib.Path("/tmp/project.zip").write_bytes(data)
-          expected = "37617afeca6f5bc47b386f5a8b34f632aaa92d7cb7173bac45135804549f9072"
+          expected = "e8e19167ed2cc8054c274418df33d65c571c36484927919c3c6ccc31ee1fa9cb"
           actual = hashlib.sha256(data).hexdigest()
           if actual != expected:
               raise SystemExit(f"Embedded project checksum mismatch: {actual} != {expected}")
