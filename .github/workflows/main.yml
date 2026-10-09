@@ -1,4 +1,4 @@
-name: Build Crypto Alert Engine V4.3.2 (10-Minute Stale Limit Cancellation + Order Lifecycle Final)
+name: CryptoAlertEngine V4.3.2 (EMA Second-Entry Gap Fix - Verified Source)
 
 on:
   workflow_dispatch:
@@ -1520,9 +1520,9 @@ jobs:
                   raise SystemExit(f'Missing unmanaged-position queue guard: {marker}')
           if 'ENTRY QUEUED: exchange position=' in trading:
               raise SystemExit('Unattributed exchange exposure must not queue/replay entry events')
-          for marker in ('lastPrice - buffer', 'lastPrice + buffer', 'passivePrice = if (side == "sell") price + buffer else price - buffer', 'market = config.emaTpMarketEnabled', 'old.tpMarket == config.emaTpMarketEnabled'):
+          for marker in ('val price = signalPrice', 'adjustSecondEmaEntryPrice', 'EMA SECOND ENTRY PRICE ADJUSTED', 'passivePrice = if (side == "sell") price + buffer else price - buffer', 'market = config.emaTpMarketEnabled', 'old.tpMarket == config.emaTpMarketEnabled'):
               if marker not in trading:
-                  raise SystemExit(f'Missing passive-limit / TP-mode invariant: {marker}')
+                  raise SystemExit(f'Missing signal-price / passive-limit / TP-mode invariant: {marker}')
           api = Path('app/src/main/java/com/cryptoalertengine/trading/DeltaTradingApi.kt').read_text(encoding='utf-8')
           if 'addProperty("post_only", true)' not in api:
               raise SystemExit('Limit orders must be post-only to avoid accidental taker execution')
