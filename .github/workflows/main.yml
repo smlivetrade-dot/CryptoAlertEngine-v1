@@ -2,8 +2,8 @@ name: LiveMarketWallpaper
 
 # Self-contained: this one file writes the whole Android project (source, config.yaml,
 # manifest, unit tests) into the runner and builds the APK.
-# Put it at .github/workflows/LiveMarketWallpaper.yml, push, then download the artifact
-# "LiveMarketWallpaper-debug-apk" from the run page.
+# Put it at .github/workflows/LiveMarketWallpaper.yml (or main.yml), push, then download the
+# artifact "LiveMarketWallpaper-debug-apk" from the run page.
 
 on:
   push:
@@ -107,14 +107,33 @@ jobs:
           # values there whenever you change a setting in the app. Missing keys fall back
           # to the values below.
 
+          # Bumped when shipped defaults change; on mismatch the endpoint/symbol keys are reset to the defaults below.
+          config_version: 3
+
           # ---- Market data (Delta Exchange public API, no API key needed) ----
           symbol: ETHUSD
           # Used for the symbol picker only if the live instrument list cannot be loaded.
           fallback_symbols: ETHUSD, BTCUSD
-          # Global exchange. Delta Exchange India accounts use the India hosts instead
-          # (check docs.delta.exchange for the current hostnames).
-          rest_base_url: "https://api.delta.exchange"
-          ws_url: "wss://socket.delta.exchange"
+          # Exchange region. "india" = Delta Exchange India (api.india.delta.exchange), "global" = Delta Global
+          # (api.delta.exchange). The two have different instruments and prices - pick the one your account uses.
+          # Choosing a region in Settings copies that region's three URLs below into rest_base_url / ws_url / ws_fallback_url.
+          region: india
+          region_options: india, global
+          rest_base_url: "https://api.india.delta.exchange"
+          ws_url: "wss://public-socket.india.delta.exchange"
+          # Tried automatically when the primary socket connects but delivers nothing / keeps failing.
+          ws_fallback_url: "wss://socket.india.delta.exchange"
+          india_rest_base_url: "https://api.india.delta.exchange"
+          india_ws_url: "wss://public-socket.india.delta.exchange"
+          india_ws_fallback_url: "wss://socket.india.delta.exchange"
+          global_rest_base_url: "https://api.delta.exchange"
+          global_ws_url: "wss://socket.delta.exchange"
+          global_ws_fallback_url: "wss://public-socket.delta.exchange"
+          # Which instruments appear in the symbol picker (options are excluded: there are thousands).
+          symbol_contract_types: perpetual_futures, futures
+          # trade = candles from last traded price, mark = candles from the mark price (MARK:<symbol>).
+          candle_source: trade
+          candle_source_options: trade, mark
           http_timeout_s: 10
           # Reconnect backoff (milliseconds) and the silence limit before a socket is declared dead.
           reconnect_min_ms: 1000
@@ -145,10 +164,10 @@ jobs:
           wallpaper_enabled: true
           # Minimum milliseconds between wallpaper redraws while the wallpaper is visible.
           wallpaper_redraw_ms: 1000
-          # Chart area as a percentage of screen height kept clear at the top (lock-screen clock)
-          # and at the bottom (gesture bar / shortcuts).
-          wallpaper_chart_top_pct: 30
-          wallpaper_chart_bottom_pct: 8
+          # Chart area as a percentage of screen height kept clear at the top (e.g. 30 to stay below the
+          # lock-screen clock) and at the bottom. 0 = chart fills the whole screen. Landscape always uses the full screen.
+          wallpaper_chart_top_pct: 0
+          wallpaper_chart_bottom_pct: 0
           LMW_EOF
           mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/App.kt')"
           cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/App.kt' <<'LMW_EOF'
@@ -328,7 +347,7 @@ jobs:
                   cv.clipRect(plotL, plotT, plotR, plotB)
                   val lastC = vis.lastOrNull()
                   if (st.candles) {
-                      val bodyW = max(1f, (tf / span * pw * 0.7).toFloat())
+                      val bodyW = max(2f * d * 0.75f, (tf / span * pw * 0.8).toFloat())
                       for (c in vis) {
                           val cx = xOf(c.t + tf / 2.0)
                           p.color = if (c.c >= c.o) st.up else st.down
@@ -500,6 +519,9 @@ jobs:
               var symbol by S("symbol")
               var restBaseUrl by S("rest_base_url")
               var wsUrl by S("ws_url")
+              var wsFallbackUrl by S("ws_fallback_url")
+              var region by S("region")
+              var candleSource by S("candle_source")
               var chartType by S("chart_type")
               var candleTimeframe by S("candle_timeframe")
               var displayDuration by S("display_duration")
@@ -525,6 +547,20 @@ jobs:
               val durationOptions get() = list("duration_options")
               val chartTypeOptions get() = list("chart_type_options")
               val fallbackSymbols get() = list("fallback_symbols")
+              val regionOptions get() = list("region_options")
+              val candleSourceOptions get() = list("candle_source_options")
+              val symbolContractTypes get() = m.getValue("symbol_contract_types").replace(" ", "")
+
+              /** Symbol used for REST candles and the candlestick channel (mark-price candles use the MARK: prefix). */
+              val dataSymbol get() = if (candleSource == "mark") "MARK:$symbol" else symbol
+
+              /** Copies the chosen region's endpoint presets into the active URL keys. */
+              fun applyRegion(r: String) {
+                  region = r
+                  for ((active, preset) in listOf("rest_base_url" to "rest_base_url", "ws_url" to "ws_url", "ws_fallback_url" to "ws_fallback_url")) {
+                      m["${r}_$preset"]?.let { m[active] = it }
+                  }
+              }
               val tfSeconds get() = Dur.seconds(candleTimeframe)
               val durSeconds get() = Dur.seconds(displayDuration)
 
@@ -536,7 +572,8 @@ jobs:
               /** True when a change requires the data engine to reload (not just a redraw). */
               fun dataKeyDiffers(o: AppConfig) =
                   symbol != o.symbol || candleTimeframe != o.candleTimeframe || displayDuration != o.displayDuration ||
-                      restBaseUrl != o.restBaseUrl || wsUrl != o.wsUrl || maxCandles != o.maxCandles ||
+                      restBaseUrl != o.restBaseUrl || wsUrl != o.wsUrl || wsFallbackUrl != o.wsFallbackUrl ||
+                      candleSource != o.candleSource || maxCandles != o.maxCandles ||
                       historyMultiplier != o.historyMultiplier
           }
           LMW_EOF
@@ -571,6 +608,13 @@ jobs:
                   val merged = LinkedHashMap(defaults)
                   if (file.exists()) {
                       try { merged.putAll(FlatYaml.parse(file.readText())) } catch (e: Exception) { /* use defaults */ }
+                  }
+                  // One-off migration: an older saved file may point at the wrong region/endpoints.
+                  if (merged["config_version"] != defaults["config_version"]) {
+                      for (k in listOf("config_version", "region", "rest_base_url", "ws_url", "ws_fallback_url", "candle_source", "symbol",
+                          "wallpaper_chart_top_pct", "wallpaper_chart_bottom_pct")) {
+                          defaults[k]?.let { merged[k] = it }
+                      }
                   }
                   sanitize(merged)
                   current = AppConfig(merged)
@@ -712,19 +756,29 @@ jobs:
                   }
               }
 
-              /** GET /v2/products - the live instrument list used to validate the symbol setting. */
-              fun symbols(): List<String> {
-                  val req = Request.Builder().url("$base/v2/products".toHttpUrl()).header("Accept", "application/json").build()
-                  client.newCall(req).execute().use { r ->
-                      if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
-                      val a = JSONObject(r.body?.string() ?: throw IOException("empty body")).getJSONArray("result")
-                      val out = sortedSetOf<String>()
-                      for (i in 0 until a.length()) {
-                          val p = a.getJSONObject(i)
-                          if (p.optString("state") == "live" && p.optString("symbol").isNotEmpty()) out.add(p.getString("symbol"))
+              /** GET /v2/products (paginated) - live instruments of the given contract types, used to validate the symbol setting. */
+              fun symbols(contractTypes: String): List<String> {
+                  val out = sortedSetOf<String>()
+                  var after: String? = null
+                  for (page in 0 until 20) {
+                      val b = "$base/v2/products".toHttpUrl().newBuilder()
+                          .addQueryParameter("states", "live")
+                          .addQueryParameter("contract_types", contractTypes)
+                          .addQueryParameter("page_size", "200")
+                      if (after != null) b.addQueryParameter("after", after)
+                      client.newCall(Request.Builder().url(b.build()).header("Accept", "application/json").build()).execute().use { r ->
+                          if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
+                          val j = JSONObject(r.body?.string() ?: throw IOException("empty body"))
+                          val a = j.getJSONArray("result")
+                          for (i in 0 until a.length()) {
+                              val p = a.getJSONObject(i)
+                              if (p.optString("symbol").isNotEmpty()) out.add(p.getString("symbol"))
+                          }
+                          after = j.optJSONObject("meta")?.optString("after", "")?.takeIf { it.isNotEmpty() && it != "null" }
                       }
-                      return out.toList()
+                      if (after == null) break
                   }
+                  return out.toList()
               }
           }
           LMW_EOF
@@ -740,12 +794,14 @@ jobs:
 
               /** Delta sends microseconds; tolerate ms and s as well. */
               fun toSec(v: Long): Long = when {
+                  v >= 100_000_000_000_000_000L -> v / 1_000_000_000L   // nanoseconds (seen in the wild)
                   v >= 100_000_000_000_000L -> v / 1_000_000L
                   v >= 100_000_000_000L -> v / 1000L
                   else -> v
               }
 
               fun toMs(v: Long): Long = when {
+                  v >= 100_000_000_000_000_000L -> v / 1_000_000L
                   v >= 100_000_000_000_000L -> v / 1000L
                   v >= 100_000_000_000L -> v
                   else -> v * 1000L
@@ -754,7 +810,7 @@ jobs:
               fun parse(text: String, channel: String, symbol: String): Live? {
                   val j = try { JSONObject(text) } catch (e: Exception) { return null }
                   if (j.optString("type") != channel) return null
-                  if (j.has("symbol") && j.optString("symbol") != symbol) return null
+                  if (j.has("symbol") && j.optString("symbol").removePrefix("MARK:") != symbol.removePrefix("MARK:")) return null
                   val start = j.optLong("candle_start_time", -1L)
                   if (start <= 0) return null
                   val o = j.optDouble("open", Double.NaN)
@@ -813,6 +869,23 @@ jobs:
               @Volatile private var symbol = ""
               @Volatile private var offsetMs = 0L
               @Volatile private var wsOffsetKnown = false
+              @Volatile private var connected = false
+              @Volatile private var lastMsgMs = 0L
+              @Volatile private var useFallbackUrl = false
+
+              @Volatile private var lastRestMs = 0L
+              @Volatile var lastError: String = ""
+                  private set
+
+              /** "LIVE" (socket up, messages flowing), "POLLING" (socket down, REST refresh every few seconds), else "CONNECTING". */
+              fun status(): String {
+                  val now = SystemClock.elapsedRealtime()
+                  return when {
+                      connected && now - lastMsgMs < 20_000 -> "LIVE"
+                      lastRestMs != 0L && now - lastRestMs < 30_000 -> "POLLING"
+                      else -> "CONNECTING"
+                  }
+              }
 
               /** Emits whenever candles change (or config changes) so views can redraw. */
               val updates = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
@@ -848,6 +921,10 @@ jobs:
                   running = cfg
                   symbol = cfg.symbol
                   wsOffsetKnown = false
+                  connected = false
+                  useFallbackUrl = false
+                  lastRestMs = 0L
+                  lastError = ""
                   val st = CandleStore(cfg.tfSeconds, cfg.maxCandles)
                   store = st
                   job = scope.launch { runLoop(cfg, st) }
@@ -881,10 +958,33 @@ jobs:
                       } catch (e: CancellationException) {
                           throw e
                       } catch (e: Exception) {
-                          // network error: retry with backoff
+                          lastError = "${e.javaClass.simpleName}: ${e.message ?: ""}".take(120)
                       }
+                      connected = false
+                      updates.tryEmit(Unit)
+                      // A session that never received any message: try the other endpoint next time.
+                      if (!gotData && cfg.wsFallbackUrl.isNotBlank() && cfg.wsFallbackUrl != cfg.wsUrl) useFallbackUrl = !useFallbackUrl
                       backoff = if (gotData) cfg.reconnectMinMs.toLong() else minOf(backoff * 2, cfg.reconnectMaxMs.toLong())
-                      delay(backoff)
+                      // While waiting to reconnect keep the chart fresh with a light REST poll (every 5 s).
+                      val until = SystemClock.elapsedRealtime() + backoff
+                      while (currentCoroutineContext().isActive && SystemClock.elapsedRealtime() < until) {
+                          delay(minOf(5000L, maxOf(250L, until - SystemClock.elapsedRealtime())))
+                          pollRest(cfg, st, rest)
+                      }
+                  }
+              }
+
+              /** Refreshes the last few candles (including the forming one) from REST. Never throws. */
+              private fun pollRest(cfg: AppConfig, st: CandleStore, rest: DeltaRest) {
+                  try {
+                      st.markStale()
+                      confirmRecent(cfg, st, rest)
+                      lastRestMs = SystemClock.elapsedRealtime()
+                      lastError = ""
+                  } catch (e: CancellationException) {
+                      throw e
+                  } catch (e: Exception) {
+                      lastError = "${e.javaClass.simpleName}: ${e.message ?: ""}".take(120)
                   }
               }
 
@@ -894,7 +994,9 @@ jobs:
                   val now = nowSec()
                   val cur = st.align(now)
                   val span = minOf(cfg.durSeconds * cfg.historyMultiplier, tf * minOf(cfg.maxCandles, 2000))
-                  val r = rest.candles(cfg.symbol, cfg.candleTimeframe, cur - span, now)
+                  val r = rest.candles(cfg.dataSymbol, cfg.candleTimeframe, cur - span, now)
+                  lastRestMs = SystemClock.elapsedRealtime()
+                  lastError = ""
                   r.serverOffsetMs?.let { if (!wsOffsetKnown && kotlin.math.abs(it) > 1500) offsetMs = it }
                   st.merge(r.candles, cur)
                   updates.tryEmit(Unit)
@@ -903,7 +1005,7 @@ jobs:
               private fun confirmRecent(cfg: AppConfig, st: CandleStore, rest: DeltaRest) {
                   val now = nowSec()
                   val cur = st.align(now)
-                  val r = rest.candles(cfg.symbol, cfg.candleTimeframe, cur - 3 * st.tf, now)
+                  val r = rest.candles(cfg.dataSymbol, cfg.candleTimeframe, cur - 3 * st.tf, now)
                   st.merge(r.candles, cur)
                   updates.tryEmit(Unit)
               }
@@ -914,18 +1016,25 @@ jobs:
                   val closed = CompletableDeferred<Unit>()
                   val lastMsg = AtomicLong(SystemClock.elapsedRealtime())
                   val got = AtomicBoolean(false)
-                  val subscribe = """{"type":"subscribe","payload":{"channels":[{"name":"$channel","symbols":["${cfg.symbol}"]}]}}"""
+                  val lastCandle = AtomicLong(0L)
+                  val subscribe = """{"type":"subscribe","payload":{"channels":[{"name":"$channel","symbols":["${cfg.dataSymbol}"]}]}}"""
 
-                  val ws: WebSocket = Http.client.newWebSocket(Request.Builder().url(cfg.wsUrl).build(), object : WebSocketListener() {
+                  val url = if (useFallbackUrl && cfg.wsFallbackUrl.isNotBlank()) cfg.wsFallbackUrl else cfg.wsUrl
+                  val ws: WebSocket = Http.client.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
                       override fun onOpen(webSocket: WebSocket, response: Response) {
+                          connected = true
+                          lastMsgMs = SystemClock.elapsedRealtime()
+                          updates.tryEmit(Unit)
                           webSocket.send(subscribe)
                           webSocket.send("""{"type":"enable_heartbeat"}""")
                       }
 
                       override fun onMessage(webSocket: WebSocket, text: String) {
                           lastMsg.set(SystemClock.elapsedRealtime())
-                          val live = LiveParser.parse(text, channel, cfg.symbol) ?: return
-                          got.set(true)
+                          lastMsgMs = lastMsg.get()
+                          got.set(true)                       // any message (incl. heartbeat) proves the endpoint works
+                          val live = LiveParser.parse(text, channel, cfg.dataSymbol) ?: return
+                          lastCandle.set(SystemClock.elapsedRealtime())
                           live.serverMs?.let { offsetMs = it - System.currentTimeMillis(); wsOffsetKnown = true }
                           val prevLast = st.last()?.t
                           st.applyLive(live.candle)
@@ -944,9 +1053,16 @@ jobs:
                   })
 
                   try {
+                      var lastPoll = SystemClock.elapsedRealtime()
                       while (!closed.isCompleted) {
                           delay(2000)
-                          if (SystemClock.elapsedRealtime() - lastMsg.get() > cfg.wsStaleSeconds * 1000L) break
+                          val now = SystemClock.elapsedRealtime()
+                          if (now - lastMsg.get() > cfg.wsStaleSeconds * 1000L) break
+                          // Socket is up but no candle data for 15 s (quiet market or unexpected format): refresh via REST.
+                          if (now - lastCandle.get() > 15_000 && now - lastPoll > 10_000) {
+                              lastPoll = now
+                              pollRest(cfg, st, rest)
+                          }
                       }
                   } finally {
                       ws.cancel()
@@ -1137,6 +1253,7 @@ jobs:
               private lateinit var symbolTv: TextView
               private lateinit var priceTv: TextView
               private lateinit var infoTv: TextView
+              private lateinit var statusTv: TextView
 
               private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -1159,7 +1276,15 @@ jobs:
               private fun refreshHeader() {
                   val cfg = ConfigStore.current
                   val snap = MarketEngine.snapshot()
-                  symbolTv.text = "${cfg.symbol}  \u00B7  ${cfg.candleTimeframe}"
+                  val status = MarketEngine.status()
+                  val live = status == "LIVE"
+                  val src = if (cfg.candleSource == "mark") " \u00B7 mark" else ""
+                  symbolTv.text = "${cfg.symbol}  \u00B7  ${cfg.candleTimeframe}$src   " + (when (status) { "LIVE" -> "\u25CF LIVE"; "POLLING" -> "\u25D0 polling"; else -> "\u25CB connecting" })
+
+                  symbolTv.setTextColor(Color.parseColor(if (live) "#D1D4DC" else "#B58900"))
+                  val err = MarketEngine.lastError
+                  statusTv.text = if (!live && err.isNotEmpty()) "Data: $err" else ""
+                  statusTv.visibility = if (statusTv.text.isEmpty()) View.GONE else View.VISIBLE
                   val last = snap.candles.lastOrNull()
                   if (last != null && snap.symbol == cfg.symbol && snap.tf == cfg.tfSeconds) {
                       priceTv.text = ChartMath.formatPrice(last.c)
@@ -1196,17 +1321,29 @@ jobs:
                   infoTv = TextView(this).apply {
                       setTextColor(Color.parseColor("#787B86")); textSize = 11f; setPadding(dp(12), dp(2), dp(12), 0); minLines = 1; maxLines = 1
                   }
+                  statusTv = TextView(this).apply { setTextColor(Color.parseColor("#B58900")); textSize = 10f; setPadding(dp(12), 0, dp(12), 0); visibility = View.GONE }
                   val chart = ChartView(this).apply { onInspect = { infoTv.text = it } }
 
+                  val land = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                  val typeSp = spinner(cfg.chartTypeOptions, cfg.chartType) { v -> ConfigStore.update { it.chartType = v } }
+                  val tfSp = spinner(cfg.timeframeOptions, cfg.candleTimeframe) { v -> ConfigStore.update { it.candleTimeframe = v } }
+                  val durSp = spinner(cfg.durationOptions, cfg.displayDuration) { v -> ConfigStore.update { it.displayDuration = v } }
                   val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(4), 0, dp(4), dp(4)) }
-                  controls.addView(spinner(cfg.chartTypeOptions, cfg.chartType) { v -> ConfigStore.update { it.chartType = v } }, LinearLayout.LayoutParams(0, -2, 1f))
-                  controls.addView(spinner(cfg.timeframeOptions, cfg.candleTimeframe) { v -> ConfigStore.update { it.candleTimeframe = v } }, LinearLayout.LayoutParams(0, -2, 1f))
-                  controls.addView(spinner(cfg.durationOptions, cfg.displayDuration) { v -> ConfigStore.update { it.displayDuration = v } }, LinearLayout.LayoutParams(0, -2, 1f))
+                  if (land) {
+                      // Landscape: selectors move into the header row so the chart gets the whole height.
+                      header.removeView(gear); header.removeView(spacer)
+                      header.addView(spacer, LinearLayout.LayoutParams(0, 1, 1f))
+                      for (sp in listOf(typeSp, tfSp, durSp)) header.addView(sp, LinearLayout.LayoutParams(dp(120), -2))
+                      header.addView(gear)
+                  } else {
+                      for (sp in listOf(typeSp, tfSp, durSp)) controls.addView(sp, LinearLayout.LayoutParams(0, -2, 1f))
+                  }
 
                   root.addView(header)
                   root.addView(infoTv)
+                  root.addView(statusTv)
                   root.addView(chart, LinearLayout.LayoutParams(-1, 0, 1f))
-                  root.addView(controls)
+                  if (!land) root.addView(controls)
                   return root
               }
 
@@ -1292,6 +1429,8 @@ jobs:
                       col.addView(c); return c
                   }
 
+                  label("Exchange region"); val regionSp = spinner(cfg.regionOptions, cfg.region)
+                  label("Price source"); val srcSp = spinner(cfg.candleSourceOptions, cfg.candleSource)
                   label("Symbol")
                   val symbolSp = spinner(listOf(cfg.symbol), cfg.symbol)
                   val symbolNote = TextView(this).apply { setTextColor(Color.parseColor("#787B86")); textSize = 11f }
@@ -1321,6 +1460,8 @@ jobs:
                           }
                           val sym = symbolSp.selectedItem as String
                           ConfigStore.update {
+                              it.applyRegion(regionSp.selectedItem as String)
+                              it.candleSource = srcSp.selectedItem as String
                               it.symbol = sym
                               it.chartType = typeSp.selectedItem as String
                               it.candleTimeframe = tfSp.selectedItem as String
@@ -1342,7 +1483,7 @@ jobs:
                   // Validate/populate the symbol list from Delta's public instrument list.
                   s.launch {
                       val list = withContext(Dispatchers.IO) {
-                          try { DeltaRest(Http.client, cfg.restBaseUrl).symbols() } catch (e: Exception) { null }
+                          try { DeltaRest(Http.client, cfg.restBaseUrl).symbols(cfg.symbolContractTypes) } catch (e: Exception) { null }
                       }
                       val opts = (list ?: (cfg.fallbackSymbols + cfg.symbol)).distinct().sorted()
                       @Suppress("UNCHECKED_CAST")
@@ -1416,7 +1557,7 @@ jobs:
                   }
 
                   override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                      w = width; h = height; dirty = true
+                      w = width; h = height; dirty = true; lastEnd = 0L
                       draw()
                   }
 
@@ -1470,8 +1611,10 @@ jobs:
                           val ok = snap.tf == tf && snap.symbol == cfg.symbol
                           val data = if (ok) snap.candles else emptyList()
                           val price = if (ok) snap.price else null
-                          val top = h * cfg.wallpaperChartTopPct / 100
-                          val bottom = h * cfg.wallpaperChartBottomPct / 100
+                          // Portrait keeps a clear band for the lock-screen clock; landscape (and top=0) uses the full screen.
+                          val landscape = w > h
+                          val top = if (landscape) 0 else h * cfg.wallpaperChartTopPct / 100
+                          val bottom = if (landscape) 0 else h * cfg.wallpaperChartBottomPct / 100
                           val ch = (h - top - bottom).coerceAtLeast(1)
                           cv.drawColor(st.bg)
                           cv.save()
@@ -1646,6 +1789,17 @@ jobs:
                   assertEquals(3000.5, l.candle.o, 0.0)
                   assertEquals(1_800_000_012_000L, l.serverMs)
                   assertTrue(l.candle.live)
+              }
+
+              @Test fun parsesNanosecondTimestamps() {
+                  val m = """{"type":"candlestick_5m","symbol":"ETHUSD","candle_start_time":1800000000000000000,"open":1,"high":2,"low":0.5,"close":1.5}"""
+                  assertEquals(1_800_000_000L, LiveParser.parse(m, "candlestick_5m", "ETHUSD")!!.candle.t)
+              }
+
+              @Test fun markPriceSymbolMatches() {
+                  val m = """{"type":"candlestick_5m","symbol":"MARK:ETHUSD","candle_start_time":1800000000000000,"open":1,"high":2,"low":0.5,"close":1.5}"""
+                  assertNotNull(LiveParser.parse(m, "candlestick_5m", "MARK:ETHUSD"))
+                  assertNotNull(LiveParser.parse(m, "candlestick_5m", "ETHUSD"))
               }
 
               @Test fun ignoresOtherChannelsAndSymbols() {
