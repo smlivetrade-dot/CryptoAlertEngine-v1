@@ -1,101 +1,1706 @@
-# LiveMarketWallpaper application configuration
-# This file configures the app. It is NOT a GitHub Actions workflow.
+name: LiveMarketWallpaper
 
-app:
-  name: "LiveMarketWallpaper"
-  version: "1.0.0"
-  package_id: "com.example.livemarketwallpaper"
+# Self-contained: this one file writes the whole Android project (source, config.yaml,
+# manifest, unit tests) into the runner and builds the APK.
+# Put it at .github/workflows/LiveMarketWallpaper.yml, push, then download the artifact
+# "LiveMarketWallpaper-debug-apk" from the run page.
 
-data:
-  provider: "delta_exchange"
-  environment: "production"
-  historical_candles: true
-  live_updates: true
-  rest_api: "public"
-  websocket: "public"
-  reconnect:
-    enabled: true
-    initial_delay_seconds: 2
-    maximum_delay_seconds: 30
-  candle_history:
-    load_on_start: true
-    retain_in_memory: true
+on:
+  push:
+  workflow_dispatch:
 
-market:
-  default_symbol: "ETHUSD"
-  allow_symbol_selection: true
-  suggested_symbols:
-    - "ETHUSD"
-    - "BTCUSD"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
 
-chart:
-  default_type: "candlestick"
-  available_types:
-    - "candlestick"
-    - "line"
+      - name: Write project files
+        shell: bash
+        run: |
+          mkdir -p "$(dirname 'app/build.gradle.kts')"
+          cat > 'app/build.gradle.kts' <<'LMW_EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
 
-  default_candle_timeframe: "5m"
-  available_candle_timeframes:
-    - "1m"
-    - "3m"
-    - "5m"
-    - "15m"
-    - "30m"
-    - "1h"
-    - "2h"
-    - "4h"
-    - "1d"
+          android {
+              namespace = "com.lmw.marketwallpaper"
+              compileSdk = 34
 
-  # Independent of candle timeframe: the total visible rolling window.
-  default_display_duration: "2h"
-  available_display_durations:
-    - "15m"
-    - "30m"
-    - "1h"
-    - "2h"
-    - "4h"
-    - "8h"
-    - "12h"
-    - "24h"
+              defaultConfig {
+                  applicationId = "com.lmw.marketwallpaper"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0.0"
+              }
+              buildTypes {
+                  release { isMinifyEnabled = false }
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+              testOptions { unitTests.isReturnDefaultValues = true }
+          }
 
-  behaviour:
-    fixed_rolling_window: true
-    auto_follow_latest_price: true
-    keep_latest_price_at_right: true
-    show_forming_candle: true
-    update_forming_candle_with_live_data: true
-    remove_data_older_than_display_window: true
-    user_pan_and_zoom_in_app: true
-    scrolling_ticker: false
+          dependencies {
+              implementation("com.squareup.okhttp3:okhttp:4.12.0")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+              testImplementation("junit:junit:4.13.2")
+              testImplementation("org.json:json:20240303")
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/AndroidManifest.xml')"
+          cat > 'app/src/main/AndroidManifest.xml' <<'LMW_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-  appearance:
-    theme: "dark"
-    background: "#101318"
-    bullish_candle: "#16A34A"
-    bearish_candle: "#DC2626"
-    show_wicks: true
-    show_grid: true
-    show_price_scale: true
-    show_time_scale: true
-    show_current_price_line: true
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-feature android:name="android.software.live_wallpaper" android:required="false" />
 
-lock_screen:
-  enabled: true
-  chart_display: true
-  use_selected_symbol: true
-  use_selected_chart_type: true
-  use_selected_timeframe: true
-  use_selected_display_duration: true
-  update_when_data_arrives: true
+              <application
+                  android:name=".App"
+                  android:allowBackup="true"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="@string/app_name"
+                  android:usesCleartextTraffic="false">
 
-performance:
-  max_history_buffer_multiplier: 2
-  pause_nonessential_work_when_screen_off: true
-  prefer_websocket_over_frequent_rest_polling: true
-  persist_last_selection: true
+                  <activity
+                      android:name=".ui.MainActivity"
+                      android:exported="true"
+                      android:theme="@android:style/Theme.Material.NoActionBar">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
 
-defaults:
-  symbol: "ETHUSD"
-  chart_type: "candlestick"
-  candle_timeframe: "5m"
-  display_duration: "2h"
+                  <activity
+                      android:name=".ui.SettingsActivity"
+                      android:exported="true"
+                      android:theme="@android:style/Theme.Material.NoActionBar" />
+
+                  <service
+                      android:name=".wallpaper.MarketWallpaperService"
+                      android:exported="true"
+                      android:label="@string/app_name"
+                      android:permission="android.permission.BIND_WALLPAPER">
+                      <intent-filter>
+                          <action android:name="android.service.wallpaper.WallpaperService" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.service.wallpaper"
+                          android:resource="@xml/wallpaper" />
+                  </service>
+              </application>
+          </manifest>
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/assets/config.yaml')"
+          cat > 'app/src/main/assets/config.yaml' <<'LMW_EOF'
+          # Live Market Wallpaper - configuration (flat "key: value" YAML).
+          # On first run the app copies this file to its private storage and rewrites the
+          # values there whenever you change a setting in the app. Missing keys fall back
+          # to the values below.
+
+          # ---- Market data (Delta Exchange public API, no API key needed) ----
+          symbol: ETHUSD
+          # Used for the symbol picker only if the live instrument list cannot be loaded.
+          fallback_symbols: ETHUSD, BTCUSD
+          # Global exchange. Delta Exchange India accounts use the India hosts instead
+          # (check docs.delta.exchange for the current hostnames).
+          rest_base_url: "https://api.delta.exchange"
+          ws_url: "wss://socket.delta.exchange"
+          http_timeout_s: 10
+          # Reconnect backoff (milliseconds) and the silence limit before a socket is declared dead.
+          reconnect_min_ms: 1000
+          reconnect_max_ms: 30000
+          ws_stale_seconds: 30
+          # Memory bounds: candles kept in RAM, and how many display-durations of history to load
+          # (the extra history is what you can scroll back through in the app).
+          max_candles: 1500
+          history_multiplier: 3
+
+          # ---- Chart ----
+          chart_type: candlestick
+          chart_type_options: candlestick, line
+          candle_timeframe: 5m
+          timeframe_options: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 1d
+          display_duration: 2h
+          duration_options: 15m, 30m, 1h, 2h, 4h, 8h, 12h, 24h
+
+          # ---- Appearance ----
+          background_color: "#0B0E11"
+          bullish_color: "#26A69A"
+          bearish_color: "#EF5350"
+          show_grid: true
+          show_price_scale: true
+          show_time_scale: true
+
+          # ---- Live wallpaper ----
+          wallpaper_enabled: true
+          # Minimum milliseconds between wallpaper redraws while the wallpaper is visible.
+          wallpaper_redraw_ms: 1000
+          # Chart area as a percentage of screen height kept clear at the top (lock-screen clock)
+          # and at the bottom (gesture bar / shortcuts).
+          wallpaper_chart_top_pct: 30
+          wallpaper_chart_bottom_pct: 8
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/App.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/App.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper
+
+          import android.app.Application
+          import com.lmw.marketwallpaper.config.ConfigStore
+
+          class App : Application() {
+              override fun onCreate() {
+                  super.onCreate()
+                  ConfigStore.init(this)
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/chart/ChartRenderer.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/chart/ChartRenderer.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.chart
+
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.DashPathEffect
+          import android.graphics.Paint
+          import android.graphics.Path
+          import android.graphics.PointF
+          import android.graphics.RectF
+          import android.graphics.Typeface
+          import com.lmw.marketwallpaper.config.AppConfig
+          import com.lmw.marketwallpaper.data.Candle
+          import java.text.SimpleDateFormat
+          import java.util.Date
+          import java.util.Locale
+          import java.util.TimeZone
+          import kotlin.math.abs
+          import kotlin.math.ceil
+          import kotlin.math.floor
+          import kotlin.math.log10
+          import kotlin.math.max
+          import kotlin.math.min
+          import kotlin.math.pow
+
+          /** Pure chart calculations (no Android types) so they can be unit tested. */
+          object ChartMath {
+              /**
+               * Right edge of the fixed rolling window: the end of the candle that is forming now.
+               * It moves forward exactly one timeframe at a time, so the latest candle always sits at the
+               * extreme right and the window never "scrolls" continuously.
+               */
+              fun windowEnd(nowSec: Long, tf: Long): Long = nowSec - Math.floorMod(nowSec, tf) + tf
+
+              fun niceStep(range: Double, target: Int): Double {
+                  val raw = range / target
+                  val mag = 10.0.pow(floor(log10(raw)))
+                  val f = raw / mag
+                  val n = when {
+                      f < 1.5 -> 1.0
+                      f < 3.0 -> 2.0
+                      f < 7.0 -> 5.0
+                      else -> 10.0
+                  }
+                  return n * mag
+              }
+
+              fun formatPrice(p: Double): String = when {
+                  abs(p) >= 1.0 -> String.format(Locale.US, "%,.2f", p)
+                  abs(p) >= 0.01 -> String.format(Locale.US, "%.4f", p)
+                  else -> String.format(Locale.US, "%.6f", p)
+              }
+          }
+
+          class ChartStyle(
+              val bg: Int,
+              val up: Int,
+              val down: Int,
+              val grid: Boolean,
+              val priceScale: Boolean,
+              val timeScale: Boolean,
+              val candles: Boolean,
+          ) {
+              companion object {
+                  fun from(c: AppConfig) = ChartStyle(
+                      Color.parseColor(c.backgroundColor), Color.parseColor(c.bullishColor), Color.parseColor(c.bearishColor),
+                      c.showGrid, c.showPriceScale, c.showTimeScale, c.isCandlestick,
+                  )
+              }
+          }
+
+          /** Draws candlesticks or a line for the time range [viewStart, viewEnd]. Shared by the app and the wallpaper. */
+          class ChartRenderer(private val density: Float) {
+              private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val txt = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val tfmt = SimpleDateFormat("HH:mm", Locale.US)
+              private val dfmt = SimpleDateFormat("dd MMM", Locale.US)
+              private val full = SimpleDateFormat("dd MMM HH:mm", Locale.US)
+              private val rect = RectF()
+              private val path = Path()
+
+              var plotL = 0f; private set
+              var plotT = 0f; private set
+              var plotR = 0f; private set
+              var plotB = 0f; private set
+              var viewStart = 0L; private set
+              var viewEnd = 1L; private set
+              var pMin = 0.0; private set
+              var pMax = 1.0; private set
+
+              fun timeAt(x: Float): Long = viewStart + ((x - plotL) / (plotR - plotL) * (viewEnd - viewStart)).toLong()
+              fun priceAt(y: Float): Double = pMax - (y - plotT) / (plotB - plotT) * (pMax - pMin)
+
+              /** Returns the candle under the crosshair (if any). */
+              fun draw(
+                  cv: Canvas, w: Int, h: Int, data: List<Candle>, tf: Long, vs: Long, ve: Long,
+                  st: ChartStyle, price: Double?, cross: PointF?, title: String?,
+              ): Candle? {
+                  val d = density
+                  val tz = TimeZone.getDefault()
+                  tfmt.timeZone = tz; dfmt.timeZone = tz; full.timeZone = tz
+                  cv.drawColor(st.bg)
+                  txt.textSize = 11f * d
+                  txt.typeface = Typeface.DEFAULT
+                  val axisW = if (st.priceScale) txt.measureText("100000.00") + 12f * d else 6f * d
+                  plotL = 4f * d; plotT = 8f * d; plotR = w - axisW
+                  plotB = h - (if (st.timeScale) 20f * d else 4f * d)
+                  viewStart = vs; viewEnd = ve
+                  val pw = plotR - plotL
+                  val ph = plotB - plotT
+                  val span = (ve - vs).toDouble()
+                  if (pw <= 0f || ph <= 0f || span <= 0.0) return null
+
+                  val vis = data.filter { it.t + tf > vs && it.t < ve }
+                  var lo = Double.MAX_VALUE
+                  var hi = -Double.MAX_VALUE
+                  for (c in vis) {
+                      lo = min(lo, if (st.candles) c.l else c.c)
+                      hi = max(hi, if (st.candles) c.h else c.c)
+                  }
+                  if (lo > hi) { val q = price ?: 1.0; lo = q * 0.995; hi = q * 1.005 }
+                  var pad = (hi - lo) * 0.08
+                  if (pad <= 0.0) pad = abs(hi) * 0.001 + 1e-9
+                  pMin = lo - pad; pMax = hi + pad
+
+                  fun yOf(v: Double) = plotT + ((pMax - v) / (pMax - pMin) * ph).toFloat()
+                  fun xOf(t: Double) = plotL + ((t - vs) / span * pw).toFloat()
+
+                  val gridColor = Color.parseColor("#1E222D")
+                  val axisColor = Color.parseColor("#787B86")
+                  p.style = Paint.Style.STROKE; p.strokeWidth = 1f; p.color = gridColor
+
+                  // Price grid + labels
+                  val pStep = ChartMath.niceStep(pMax - pMin, 5)
+                  var v = ceil(pMin / pStep) * pStep
+                  txt.color = axisColor
+                  while (v <= pMax) {
+                      val y = yOf(v)
+                      if (st.grid) cv.drawLine(plotL, y, plotR, y, p)
+                      if (st.priceScale) cv.drawText(ChartMath.formatPrice(v), plotR + 6f * d, y + 4f * d, txt)
+                      v += pStep
+                  }
+
+                  // Time grid + labels (aligned to local time)
+                  val steps = longArrayOf(60, 300, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400, 172800)
+                  val tStep = steps.firstOrNull { span / it <= 6.0 } ?: steps.last()
+                  val tzSec = tz.getOffset(vs * 1000) / 1000L
+                  var t = ((vs + tzSec + tStep - 1) / tStep) * tStep - tzSec
+                  while (t <= ve) {
+                      val x = xOf(t.toDouble())
+                      if (st.grid) cv.drawLine(x, plotT, x, plotB, p)
+                      if (st.timeScale) {
+                          val s = (if (tStep >= 86400) dfmt else tfmt).format(Date(t * 1000))
+                          val tw = txt.measureText(s)
+                          if (x + tw / 2 <= plotR + axisW * 0.5f && x - tw / 2 >= 0f) cv.drawText(s, x - tw / 2, plotB + 15f * d, txt)
+                      }
+                      t += tStep
+                  }
+
+                  cv.save()
+                  cv.clipRect(plotL, plotT, plotR, plotB)
+                  val lastC = vis.lastOrNull()
+                  if (st.candles) {
+                      val bodyW = max(1f, (tf / span * pw * 0.7).toFloat())
+                      for (c in vis) {
+                          val cx = xOf(c.t + tf / 2.0)
+                          p.color = if (c.c >= c.o) st.up else st.down
+                          p.style = Paint.Style.STROKE; p.strokeWidth = max(1f, d)
+                          cv.drawLine(cx, yOf(c.h), cx, yOf(c.l), p)
+                          p.style = Paint.Style.FILL
+                          val top = yOf(max(c.o, c.c))
+                          var bot = yOf(min(c.o, c.c))
+                          if (bot - top < 1f) bot = top + 1f
+                          cv.drawRect(cx - bodyW / 2, top, cx + bodyW / 2, bot, p)
+                      }
+                  } else if (vis.isNotEmpty()) {
+                      path.reset()
+                      vis.forEachIndexed { i, c ->
+                          val x = xOf(c.t + tf / 2.0); val y = yOf(c.c)
+                          if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                      }
+                      p.style = Paint.Style.STROKE; p.strokeWidth = 1.6f * d
+                      p.color = if (vis.last().c >= vis.first().c) st.up else st.down
+                      cv.drawPath(path, p)
+                  }
+
+                  // Current price line
+                  var priceY = -1f
+                  var priceCol = st.up
+                  if (price != null && price >= pMin && price <= pMax) {
+                      priceY = yOf(price)
+                      priceCol = if (lastC == null || lastC.c >= lastC.o) st.up else st.down
+                      p.style = Paint.Style.STROKE; p.strokeWidth = max(1f, d * 0.8f); p.color = priceCol
+                      p.pathEffect = DashPathEffect(floatArrayOf(5f * d, 4f * d), 0f)
+                      cv.drawLine(plotL, priceY, plotR, priceY, p)
+                      p.pathEffect = null
+                  }
+                  cv.restore()
+
+                  if (priceY >= 0f && price != null && st.priceScale) tag(cv, ChartMath.formatPrice(price), plotR, w.toFloat(), priceY, priceCol, Color.WHITE)
+
+                  if (title != null) {
+                      txt.color = Color.parseColor("#D1D4DC"); txt.typeface = Typeface.DEFAULT_BOLD; txt.textSize = 14f * d
+                      cv.drawText(title, plotL + 6f * d, plotT + 16f * d, txt)
+                      txt.typeface = Typeface.DEFAULT; txt.textSize = 11f * d
+                  }
+
+                  // Crosshair
+                  var found: Candle? = null
+                  if (cross != null && cross.x >= plotL && cross.x <= plotR && cross.y >= plotT && cross.y <= plotB) {
+                      val tt = timeAt(cross.x)
+                      val f = vis.firstOrNull { tt >= it.t && tt < it.t + tf }
+                      found = f
+                      val cx = if (f != null) xOf(f.t + tf / 2.0) else cross.x
+                      val ch = Color.parseColor("#758696")
+                      p.style = Paint.Style.STROKE; p.strokeWidth = max(1f, d * 0.8f); p.color = ch
+                      p.pathEffect = DashPathEffect(floatArrayOf(4f * d, 3f * d), 0f)
+                      cv.drawLine(cx, plotT, cx, plotB, p)
+                      cv.drawLine(plotL, cross.y, plotR, cross.y, p)
+                      p.pathEffect = null
+                      val tagBg = Color.parseColor("#363A45")
+                      if (st.priceScale) tag(cv, ChartMath.formatPrice(priceAt(cross.y)), plotR, w.toFloat(), cross.y, tagBg, Color.WHITE)
+                      if (st.timeScale) {
+                          val s = full.format(Date((f?.t ?: tt) * 1000))
+                          val tw = txt.measureText(s) + 10f * d
+                          val left = (cx - tw / 2).coerceIn(0f, w - tw)
+                          rect.set(left, plotB + 2f * d, left + tw, plotB + 18f * d)
+                          p.style = Paint.Style.FILL; p.color = tagBg
+                          cv.drawRoundRect(rect, 3f * d, 3f * d, p)
+                          txt.color = Color.WHITE
+                          cv.drawText(s, left + 5f * d, plotB + 14f * d, txt)
+                      }
+                  }
+                  return found
+              }
+
+              private fun tag(cv: Canvas, s: String, l: Float, r: Float, y: Float, bg: Int, fg: Int) {
+                  val d = density
+                  rect.set(l, y - 8f * d, r, y + 8f * d)
+                  p.style = Paint.Style.FILL; p.color = bg
+                  cv.drawRect(rect, p)
+                  txt.color = fg
+                  cv.drawText(s, l + 6f * d, y + 4f * d, txt)
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/config/AppConfig.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/config/AppConfig.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.config
+
+          import kotlin.properties.ReadWriteProperty
+          import kotlin.reflect.KProperty
+
+          /** "5m" -> 300, "2h" -> 7200, "1d" -> 86400. */
+          object Dur {
+              fun seconds(s: String): Long {
+                  val t = s.trim().lowercase()
+                  require(t.length >= 2) { "bad duration: $s" }
+                  val n = t.dropLast(1).toLong()
+                  require(n > 0) { "bad duration: $s" }
+                  return when (t.last()) {
+                      'm' -> n * 60
+                      'h' -> n * 3600
+                      'd' -> n * 86400
+                      else -> throw IllegalArgumentException("bad duration: $s")
+                  }
+              }
+
+              fun isValid(s: String) = try { seconds(s); true } catch (e: Exception) { false }
+          }
+
+          /** Minimal parser/writer for flat "key: value" YAML (comments, quoted values). */
+          object FlatYaml {
+              fun parse(text: String): MutableMap<String, String> {
+                  val m = LinkedHashMap<String, String>()
+                  for (raw in text.lines()) {
+                      val line = raw.trim()
+                      if (line.isEmpty() || line.startsWith("#")) continue
+                      val i = line.indexOf(':')
+                      if (i <= 0) continue
+                      val k = line.substring(0, i).trim()
+                      var v = line.substring(i + 1).trim()
+                      if (v.startsWith("\"") || v.startsWith("'")) {
+                          val q = v[0]
+                          val e = v.indexOf(q, 1)
+                          v = if (e > 0) v.substring(1, e) else v.substring(1)
+                      } else {
+                          val c = v.indexOf(" #")
+                          if (c >= 0) v = v.substring(0, c).trim()
+                      }
+                      m[k] = v
+                  }
+                  return m
+              }
+
+              private fun fmt(v: String) =
+                  if (v.startsWith("#") || v.startsWith("http") || v.startsWith("ws") || v.contains(": ")) "\"$v\"" else v
+
+              /** Rewrites [template], keeping its comments and order, with the values from [values]. */
+              fun dump(template: String, values: Map<String, String>): String {
+                  val seen = HashSet<String>()
+                  val sb = StringBuilder()
+                  for (raw in template.lines()) {
+                      val line = raw.trim()
+                      val i = line.indexOf(':')
+                      val key = if (line.isNotEmpty() && !line.startsWith("#") && i > 0) line.substring(0, i).trim() else null
+                      if (key != null && values.containsKey(key)) {
+                          sb.append(key).append(": ").append(fmt(values.getValue(key))).append('\n')
+                          seen.add(key)
+                      } else sb.append(raw).append('\n')
+                  }
+                  for ((k, v) in values) if (k !in seen) sb.append(k).append(": ").append(fmt(v)).append('\n')
+                  return sb.toString().trimEnd('\n') + "\n"
+              }
+          }
+
+          private class S(val k: String) : ReadWriteProperty<AppConfig, String> {
+              override fun getValue(thisRef: AppConfig, property: KProperty<*>): String = thisRef.m.getValue(k)
+              override fun setValue(thisRef: AppConfig, property: KProperty<*>, value: String) { thisRef.m[k] = value }
+          }
+
+          private class B(val k: String) : ReadWriteProperty<AppConfig, Boolean> {
+              override fun getValue(thisRef: AppConfig, property: KProperty<*>): Boolean = thisRef.m.getValue(k).toBoolean()
+              override fun setValue(thisRef: AppConfig, property: KProperty<*>, value: Boolean) { thisRef.m[k] = value.toString() }
+          }
+
+          private class I(val k: String) : ReadWriteProperty<AppConfig, Int> {
+              override fun getValue(thisRef: AppConfig, property: KProperty<*>): Int = thisRef.m.getValue(k).toInt()
+              override fun setValue(thisRef: AppConfig, property: KProperty<*>, value: Int) { thisRef.m[k] = value.toString() }
+          }
+
+          class AppConfig(internal val m: MutableMap<String, String>) {
+              var symbol by S("symbol")
+              var restBaseUrl by S("rest_base_url")
+              var wsUrl by S("ws_url")
+              var chartType by S("chart_type")
+              var candleTimeframe by S("candle_timeframe")
+              var displayDuration by S("display_duration")
+              var backgroundColor by S("background_color")
+              var bullishColor by S("bullish_color")
+              var bearishColor by S("bearish_color")
+              var showGrid by B("show_grid")
+              var showPriceScale by B("show_price_scale")
+              var showTimeScale by B("show_time_scale")
+              var wallpaperEnabled by B("wallpaper_enabled")
+              var httpTimeoutS by I("http_timeout_s")
+              var reconnectMinMs by I("reconnect_min_ms")
+              var reconnectMaxMs by I("reconnect_max_ms")
+              var wsStaleSeconds by I("ws_stale_seconds")
+              var maxCandles by I("max_candles")
+              var historyMultiplier by I("history_multiplier")
+              var wallpaperRedrawMs by I("wallpaper_redraw_ms")
+              var wallpaperChartTopPct by I("wallpaper_chart_top_pct")
+              var wallpaperChartBottomPct by I("wallpaper_chart_bottom_pct")
+
+              val isCandlestick get() = chartType == "candlestick"
+              val timeframeOptions get() = list("timeframe_options")
+              val durationOptions get() = list("duration_options")
+              val chartTypeOptions get() = list("chart_type_options")
+              val fallbackSymbols get() = list("fallback_symbols")
+              val tfSeconds get() = Dur.seconds(candleTimeframe)
+              val durSeconds get() = Dur.seconds(displayDuration)
+
+              private fun list(k: String) = m.getValue(k).split(",").map { it.trim() }.filter { it.isNotEmpty() }
+
+              fun toMap(): Map<String, String> = LinkedHashMap(m)
+              fun copy() = AppConfig(LinkedHashMap(m))
+
+              /** True when a change requires the data engine to reload (not just a redraw). */
+              fun dataKeyDiffers(o: AppConfig) =
+                  symbol != o.symbol || candleTimeframe != o.candleTimeframe || displayDuration != o.displayDuration ||
+                      restBaseUrl != o.restBaseUrl || wsUrl != o.wsUrl || maxCandles != o.maxCandles ||
+                      historyMultiplier != o.historyMultiplier
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/config/ConfigStore.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/config/ConfigStore.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.config
+
+          import android.content.Context
+          import kotlinx.coroutines.channels.BufferOverflow
+          import kotlinx.coroutines.flow.MutableSharedFlow
+          import java.io.File
+
+          /** Loads config.yaml (defaults from assets, user values from private storage) and persists changes. */
+          object ConfigStore {
+              private lateinit var file: File
+              private lateinit var template: String
+              private lateinit var defaults: Map<String, String>
+
+              @Volatile
+              lateinit var current: AppConfig
+                  private set
+
+              val changes = MutableSharedFlow<AppConfig>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+              @Synchronized
+              fun init(ctx: Context) {
+                  if (::file.isInitialized) return
+                  val app = ctx.applicationContext
+                  template = app.assets.open("config.yaml").bufferedReader().use { it.readText() }
+                  defaults = FlatYaml.parse(template)
+                  file = File(app.filesDir, "config.yaml")
+                  val merged = LinkedHashMap(defaults)
+                  if (file.exists()) {
+                      try { merged.putAll(FlatYaml.parse(file.readText())) } catch (e: Exception) { /* use defaults */ }
+                  }
+                  sanitize(merged)
+                  current = AppConfig(merged)
+                  if (!file.exists()) save(current)
+              }
+
+              /** Replaces unparsable values with the shipped defaults so a bad edit cannot crash the app. */
+              private fun sanitize(m: MutableMap<String, String>) {
+                  for (k in listOf("candle_timeframe", "display_duration")) if (!Dur.isValid(m[k] ?: "")) m[k] = defaults.getValue(k)
+                  for (k in listOf("max_candles", "history_multiplier", "http_timeout_s", "reconnect_min_ms", "reconnect_max_ms",
+                      "ws_stale_seconds", "wallpaper_redraw_ms", "wallpaper_chart_top_pct", "wallpaper_chart_bottom_pct")) {
+                      if (m[k]?.toIntOrNull() == null) m[k] = defaults.getValue(k)
+                  }
+                  m["max_candles"] = m.getValue("max_candles").toInt().coerceIn(50, 2000).toString()
+                  m["history_multiplier"] = m.getValue("history_multiplier").toInt().coerceIn(1, 10).toString()
+                  m["wallpaper_redraw_ms"] = m.getValue("wallpaper_redraw_ms").toInt().coerceAtLeast(250).toString()
+              }
+
+              @Synchronized
+              fun update(block: (AppConfig) -> Unit) {
+                  val c = current.copy()
+                  block(c)
+                  if (c.toMap() == current.toMap()) return
+                  current = c
+                  save(c)
+                  changes.tryEmit(c)
+              }
+
+              private fun save(c: AppConfig) {
+                  try {
+                      val tmp = File(file.parentFile, "config.yaml.tmp")
+                      tmp.writeText(FlatYaml.dump(template, c.toMap()))
+                      if (!tmp.renameTo(file)) { file.writeText(tmp.readText()); tmp.delete() }
+                  } catch (e: Exception) { /* keep running with in-memory config */ }
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/data/Candle.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/data/Candle.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.data
+
+          /** [t] is the candle open time in epoch seconds, aligned to the timeframe. */
+          data class Candle(
+              val t: Long,
+              val o: Double,
+              val h: Double,
+              val l: Double,
+              val c: Double,
+              val live: Boolean = false,
+          )
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/data/CandleStore.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/data/CandleStore.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.data
+
+          import java.util.TreeMap
+
+          /**
+           * Candles for one symbol/timeframe, keyed by aligned open time (so duplicates are impossible).
+           * Closed candles come from REST, the forming candle from the WebSocket.
+           */
+          class CandleStore(val tf: Long, private val maxCandles: Int) {
+              private val map = TreeMap<Long, Candle>()
+
+              fun align(t: Long): Long = t - Math.floorMod(t, tf)
+
+              /**
+               * Merges REST candles. Candles older than [formingStart] are final and always replace what we hold;
+               * the forming candle only replaces data that is not already fed by the live stream.
+               */
+              @Synchronized
+              fun merge(list: List<Candle>, formingStart: Long) {
+                  for (c in list) {
+                      val t = align(c.t)
+                      val ex = map[t]
+                      if (t < formingStart || ex == null || !ex.live) map[t] = c.copy(t = t, live = false)
+                  }
+                  trim()
+              }
+
+              @Synchronized
+              fun applyLive(c: Candle) {
+                  val t = align(c.t)
+                  map[t] = c.copy(t = t, live = true)
+                  trim()
+              }
+
+              /** After a disconnect live data is stale: fresh REST data may replace it. */
+              @Synchronized
+              fun markStale() {
+                  map.replaceAll { _, v -> if (v.live) v.copy(live = false) else v }
+              }
+
+              @Synchronized fun snapshot(): List<Candle> = ArrayList(map.values)
+              @Synchronized fun last(): Candle? = map.lastEntry()?.value
+              @Synchronized fun size(): Int = map.size
+
+              private fun trim() {
+                  while (map.size > maxCandles) map.pollFirstEntry()
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/data/DeltaRest.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/data/DeltaRest.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.data
+
+          import okhttp3.HttpUrl.Companion.toHttpUrl
+          import okhttp3.OkHttpClient
+          import okhttp3.Request
+          import org.json.JSONObject
+          import java.io.IOException
+
+          class DeltaRest(private val client: OkHttpClient, base: String) {
+              private val base = base.trimEnd('/')
+
+              data class CandleResult(val candles: List<Candle>, val serverOffsetMs: Long?)
+
+              /** GET /v2/history/candles - public, no key. Times are epoch seconds. */
+              fun candles(symbol: String, resolution: String, startSec: Long, endSec: Long): CandleResult {
+                  val url = "$base/v2/history/candles".toHttpUrl().newBuilder()
+                      .addQueryParameter("resolution", resolution)
+                      .addQueryParameter("symbol", symbol)
+                      .addQueryParameter("start", startSec.toString())
+                      .addQueryParameter("end", endSec.toString())
+                      .build()
+                  client.newCall(Request.Builder().url(url).header("Accept", "application/json").build()).execute().use { r ->
+                      if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
+                      val offset = r.headers.getDate("Date")?.time?.let { it - System.currentTimeMillis() }
+                      val j = JSONObject(r.body?.string() ?: throw IOException("empty body"))
+                      if (!j.optBoolean("success", true)) throw IOException("API error")
+                      val a = j.getJSONArray("result")
+                      val out = ArrayList<Candle>(a.length())
+                      for (i in 0 until a.length()) {
+                          val o = a.getJSONObject(i)
+                          out.add(Candle(o.getLong("time"), o.getDouble("open"), o.getDouble("high"), o.getDouble("low"), o.getDouble("close")))
+                      }
+                      out.sortBy { it.t }
+                      return CandleResult(out, offset)
+                  }
+              }
+
+              /** GET /v2/products - the live instrument list used to validate the symbol setting. */
+              fun symbols(): List<String> {
+                  val req = Request.Builder().url("$base/v2/products".toHttpUrl()).header("Accept", "application/json").build()
+                  client.newCall(req).execute().use { r ->
+                      if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
+                      val a = JSONObject(r.body?.string() ?: throw IOException("empty body")).getJSONArray("result")
+                      val out = sortedSetOf<String>()
+                      for (i in 0 until a.length()) {
+                          val p = a.getJSONObject(i)
+                          if (p.optString("state") == "live" && p.optString("symbol").isNotEmpty()) out.add(p.getString("symbol"))
+                      }
+                      return out.toList()
+                  }
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/data/LiveParser.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/data/LiveParser.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.data
+
+          import org.json.JSONObject
+
+          /** Parses Delta Exchange `candlestick_<res>` WebSocket messages. */
+          object LiveParser {
+              data class Live(val candle: Candle, val serverMs: Long?)
+
+              /** Delta sends microseconds; tolerate ms and s as well. */
+              fun toSec(v: Long): Long = when {
+                  v >= 100_000_000_000_000L -> v / 1_000_000L
+                  v >= 100_000_000_000L -> v / 1000L
+                  else -> v
+              }
+
+              fun toMs(v: Long): Long = when {
+                  v >= 100_000_000_000_000L -> v / 1000L
+                  v >= 100_000_000_000L -> v
+                  else -> v * 1000L
+              }
+
+              fun parse(text: String, channel: String, symbol: String): Live? {
+                  val j = try { JSONObject(text) } catch (e: Exception) { return null }
+                  if (j.optString("type") != channel) return null
+                  if (j.has("symbol") && j.optString("symbol") != symbol) return null
+                  val start = j.optLong("candle_start_time", -1L)
+                  if (start <= 0) return null
+                  val o = j.optDouble("open", Double.NaN)
+                  val h = j.optDouble("high", Double.NaN)
+                  val l = j.optDouble("low", Double.NaN)
+                  val c = j.optDouble("close", Double.NaN)
+                  if (o.isNaN() || h.isNaN() || l.isNaN() || c.isNaN()) return null
+                  val ts = j.optLong("timestamp", -1L)
+                  return Live(Candle(toSec(start), o, h, l, c, true), if (ts > 0) toMs(ts) else null)
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/data/MarketEngine.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/data/MarketEngine.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.data
+
+          import android.os.SystemClock
+          import com.lmw.marketwallpaper.config.AppConfig
+          import com.lmw.marketwallpaper.config.ConfigStore
+          import kotlinx.coroutines.*
+          import kotlinx.coroutines.channels.BufferOverflow
+          import kotlinx.coroutines.flow.MutableSharedFlow
+          import okhttp3.OkHttpClient
+          import okhttp3.Request
+          import okhttp3.Response
+          import okhttp3.WebSocket
+          import okhttp3.WebSocketListener
+          import java.util.concurrent.TimeUnit
+          import java.util.concurrent.atomic.AtomicBoolean
+          import java.util.concurrent.atomic.AtomicLong
+
+          object Http {
+              val client: OkHttpClient by lazy {
+                  val t = ConfigStore.current.httpTimeoutS.toLong()
+                  OkHttpClient.Builder()
+                      .connectTimeout(t, TimeUnit.SECONDS)
+                      .readTimeout(t, TimeUnit.SECONDS)
+                      .pingInterval(20, TimeUnit.SECONDS)
+                      .build()
+              }
+          }
+
+          /**
+           * Data engine: REST backfill + WebSocket live candle + reconnect. Reference-counted: it only runs
+           * (and only uses network/CPU) while the app screen or the wallpaper is visible.
+           */
+          object MarketEngine {
+              data class Snapshot(val symbol: String, val tf: Long, val candles: List<Candle>, val price: Double?)
+
+              private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+              private val owners = HashSet<Any>()
+              private var job: Job? = null
+              private var running: AppConfig? = null
+
+              @Volatile private var store = CandleStore(300, 1500)
+              @Volatile private var symbol = ""
+              @Volatile private var offsetMs = 0L
+              @Volatile private var wsOffsetKnown = false
+
+              /** Emits whenever candles change (or config changes) so views can redraw. */
+              val updates = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+              init {
+                  scope.launch { ConfigStore.changes.collect { onConfig(it) } }
+              }
+
+              /** Current exchange-synchronised time in epoch seconds. */
+              fun nowSec(): Long = (System.currentTimeMillis() + offsetMs) / 1000
+
+              fun snapshot(): Snapshot {
+                  val st = store
+                  val c = st.snapshot()
+                  return Snapshot(symbol, st.tf, c, c.lastOrNull()?.c)
+              }
+
+              @Synchronized
+              fun acquire(owner: Any) {
+                  owners.add(owner)
+                  if (job == null) start()
+              }
+
+              @Synchronized
+              fun release(owner: Any) {
+                  owners.remove(owner)
+                  if (owners.isEmpty()) stop()
+              }
+
+              @Synchronized
+              private fun start() {
+                  val cfg = ConfigStore.current
+                  running = cfg
+                  symbol = cfg.symbol
+                  wsOffsetKnown = false
+                  val st = CandleStore(cfg.tfSeconds, cfg.maxCandles)
+                  store = st
+                  job = scope.launch { runLoop(cfg, st) }
+              }
+
+              @Synchronized
+              private fun stop() {
+                  job?.cancel()
+                  job = null
+              }
+
+              @Synchronized
+              private fun onConfig(c: AppConfig) {
+                  val r = running
+                  if (job != null && r != null && c.dataKeyDiffers(r)) {
+                      stop()
+                      start()
+                  }
+                  updates.tryEmit(Unit)
+              }
+
+              private suspend fun runLoop(cfg: AppConfig, st: CandleStore) {
+                  val rest = DeltaRest(Http.client, cfg.restBaseUrl)
+                  var backoff = cfg.reconnectMinMs.toLong()
+                  while (currentCoroutineContext().isActive) {
+                      var gotData = false
+                      try {
+                          st.markStale()
+                          backfill(cfg, st, rest)
+                          gotData = listen(cfg, st, rest)
+                      } catch (e: CancellationException) {
+                          throw e
+                      } catch (e: Exception) {
+                          // network error: retry with backoff
+                      }
+                      backoff = if (gotData) cfg.reconnectMinMs.toLong() else minOf(backoff * 2, cfg.reconnectMaxMs.toLong())
+                      delay(backoff)
+                  }
+              }
+
+              /** Loads closed history plus the forming candle; safe to repeat after every reconnect. */
+              private fun backfill(cfg: AppConfig, st: CandleStore, rest: DeltaRest) {
+                  val tf = st.tf
+                  val now = nowSec()
+                  val cur = st.align(now)
+                  val span = minOf(cfg.durSeconds * cfg.historyMultiplier, tf * minOf(cfg.maxCandles, 2000))
+                  val r = rest.candles(cfg.symbol, cfg.candleTimeframe, cur - span, now)
+                  r.serverOffsetMs?.let { if (!wsOffsetKnown && kotlin.math.abs(it) > 1500) offsetMs = it }
+                  st.merge(r.candles, cur)
+                  updates.tryEmit(Unit)
+              }
+
+              private fun confirmRecent(cfg: AppConfig, st: CandleStore, rest: DeltaRest) {
+                  val now = nowSec()
+                  val cur = st.align(now)
+                  val r = rest.candles(cfg.symbol, cfg.candleTimeframe, cur - 3 * st.tf, now)
+                  st.merge(r.candles, cur)
+                  updates.tryEmit(Unit)
+              }
+
+              /** Runs one WebSocket session. Returns true if any data was received. */
+              private suspend fun listen(cfg: AppConfig, st: CandleStore, rest: DeltaRest): Boolean {
+                  val channel = "candlestick_${cfg.candleTimeframe}"
+                  val closed = CompletableDeferred<Unit>()
+                  val lastMsg = AtomicLong(SystemClock.elapsedRealtime())
+                  val got = AtomicBoolean(false)
+                  val subscribe = """{"type":"subscribe","payload":{"channels":[{"name":"$channel","symbols":["${cfg.symbol}"]}]}}"""
+
+                  val ws: WebSocket = Http.client.newWebSocket(Request.Builder().url(cfg.wsUrl).build(), object : WebSocketListener() {
+                      override fun onOpen(webSocket: WebSocket, response: Response) {
+                          webSocket.send(subscribe)
+                          webSocket.send("""{"type":"enable_heartbeat"}""")
+                      }
+
+                      override fun onMessage(webSocket: WebSocket, text: String) {
+                          lastMsg.set(SystemClock.elapsedRealtime())
+                          val live = LiveParser.parse(text, channel, cfg.symbol) ?: return
+                          got.set(true)
+                          live.serverMs?.let { offsetMs = it - System.currentTimeMillis(); wsOffsetKnown = true }
+                          val prevLast = st.last()?.t
+                          st.applyLive(live.candle)
+                          if (prevLast != null && st.align(live.candle.t) > prevLast) {
+                              // A new candle started: confirm the one that just closed with REST data.
+                              scope.launch {
+                                  delay(2000)
+                                  try { confirmRecent(cfg, st, rest) } catch (e: Exception) { /* next reconnect will heal */ }
+                              }
+                          }
+                          updates.tryEmit(Unit)
+                      }
+
+                      override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { closed.complete(Unit) }
+                      override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { closed.complete(Unit) }
+                  })
+
+                  try {
+                      while (!closed.isCompleted) {
+                          delay(2000)
+                          if (SystemClock.elapsedRealtime() - lastMsg.get() > cfg.wsStaleSeconds * 1000L) break
+                      }
+                  } finally {
+                      ws.cancel()
+                  }
+                  return got.get()
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/ui/ChartView.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/ui/ChartView.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.ui
+
+          import android.content.Context
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.graphics.PointF
+          import android.graphics.RectF
+          import android.view.GestureDetector
+          import android.view.MotionEvent
+          import android.view.ScaleGestureDetector
+          import android.view.View
+          import com.lmw.marketwallpaper.chart.ChartMath
+          import com.lmw.marketwallpaper.chart.ChartRenderer
+          import com.lmw.marketwallpaper.chart.ChartStyle
+          import com.lmw.marketwallpaper.config.ConfigStore
+          import com.lmw.marketwallpaper.data.Candle
+          import com.lmw.marketwallpaper.data.MarketEngine
+          import kotlinx.coroutines.CoroutineScope
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.SupervisorJob
+          import kotlinx.coroutines.cancel
+          import kotlinx.coroutines.launch
+          import java.text.SimpleDateFormat
+          import java.util.Date
+          import java.util.Locale
+          import kotlin.math.max
+          import kotlin.math.min
+
+          /** Interactive chart: pinch zoom, drag to inspect history, long-press crosshair, auto-follow. */
+          class ChartView(ctx: Context) : View(ctx) {
+              private val d = resources.displayMetrics.density
+              private val renderer = ChartRenderer(d)
+              private val pill = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val pillRect = RectF()
+              private val timeFmt = SimpleDateFormat("dd MMM HH:mm", Locale.US)
+
+              /** Called with the crosshair readout ("" when inactive). */
+              var onInspect: ((String) -> Unit)? = null
+
+              private var zoom = 1.0
+              private var panSec = 0.0          // seconds scrolled back from the live edge; 0 = auto-follow
+              private var cross: PointF? = null
+              private var crossDrag = false
+              private var viewKey = ""
+              private var lastInfo = ""
+              private var scope: CoroutineScope? = null
+              private var lastData: List<Candle> = emptyList()
+              private var lastSpan = 1.0
+              private var lastTf = 300L
+
+              private val scaleDetector = ScaleGestureDetector(ctx, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                  override fun onScale(det: ScaleGestureDetector): Boolean {
+                      zoom = (zoom / det.scaleFactor).coerceIn(0.1, 6.0)
+                      clampPan(); invalidate(); return true
+                  }
+              })
+
+              private val gestures = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
+                  override fun onDown(e: MotionEvent) = true
+
+                  override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
+                      if (crossDrag) { cross = PointF(e2.x, e2.y); invalidate(); return true }
+                      val pw = renderer.plotR - renderer.plotL
+                      if (pw <= 0f) return true
+                      panSec += (-dx / pw) * lastSpan
+                      clampPan()
+                      if (panSec < lastSpan * 0.01) panSec = 0.0   // back at the latest price: resume auto-follow
+                      cross = null
+                      invalidate(); return true
+                  }
+
+                  override fun onLongPress(e: MotionEvent) {
+                      crossDrag = true; cross = PointF(e.x, e.y); invalidate()
+                  }
+
+                  override fun onSingleTapUp(e: MotionEvent): Boolean {
+                      if (panSec > 0 && pillRect.contains(e.x, e.y)) { panSec = 0.0; invalidate(); return true }
+                      if (cross != null) { cross = null; invalidate() }
+                      return true
+                  }
+              })
+
+              private fun clampPan() {
+                  val first = lastData.firstOrNull()?.t
+                  val liveEnd = ChartMath.windowEnd(MarketEngine.nowSec(), lastTf)
+                  val maxPan = if (first == null) 0.0 else max(0.0, (liveEnd - first) - lastSpan * 0.5)
+                  panSec = panSec.coerceIn(0.0, maxPan)
+              }
+
+              override fun onTouchEvent(e: MotionEvent): Boolean {
+                  scaleDetector.onTouchEvent(e)
+                  if (!scaleDetector.isInProgress) gestures.onTouchEvent(e)
+                  if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) crossDrag = false
+                  return true
+              }
+
+              override fun onAttachedToWindow() {
+                  super.onAttachedToWindow()
+                  val s = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+                  scope = s
+                  s.launch { MarketEngine.updates.collect { invalidate() } }
+              }
+
+              override fun onDetachedFromWindow() {
+                  scope?.cancel()
+                  super.onDetachedFromWindow()
+              }
+
+              override fun onDraw(cv: Canvas) {
+                  val cfg = ConfigStore.current
+                  val key = "${cfg.symbol}|${cfg.candleTimeframe}|${cfg.displayDuration}"
+                  if (key != viewKey) { viewKey = key; zoom = 1.0; panSec = 0.0; cross = null }
+
+                  val snap = MarketEngine.snapshot()
+                  val tf = cfg.tfSeconds
+                  val data = if (snap.tf == tf && snap.symbol == cfg.symbol) snap.candles else emptyList()
+                  val price = if (data.isEmpty()) null else snap.price
+                  val span = max(cfg.durSeconds * zoom, tf * 5.0)
+                  lastData = data; lastSpan = span; lastTf = tf
+                  clampPan()
+
+                  val liveEnd = ChartMath.windowEnd(MarketEngine.nowSec(), tf)
+                  val ve = liveEnd - panSec.toLong()
+                  val vs = ve - span.toLong()
+                  val found = renderer.draw(cv, width, height, data, tf, vs, ve, ChartStyle.from(cfg), price, cross, null)
+
+                  if (panSec > 0) {
+                      pill.style = Paint.Style.FILL; pill.color = Color.parseColor("#2A2E39")
+                      pill.textSize = 12f * d
+                      val s = "Latest \u25B8"
+                      val tw = pill.measureText(s) + 20f * d
+                      pillRect.set(renderer.plotR - tw - 8f * d, renderer.plotB - 34f * d, renderer.plotR - 8f * d, renderer.plotB - 8f * d)
+                      cv.drawRoundRect(pillRect, 13f * d, 13f * d, pill)
+                      pill.color = Color.WHITE
+                      cv.drawText(s, pillRect.left + 10f * d, pillRect.centerY() + 4f * d, pill)
+                  } else pillRect.setEmpty()
+
+                  val info = if (cross != null && found != null) {
+                      "${timeFmt.format(Date(found.t * 1000))}   O ${ChartMath.formatPrice(found.o)}  H ${ChartMath.formatPrice(found.h)}  L ${ChartMath.formatPrice(found.l)}  C ${ChartMath.formatPrice(found.c)}"
+                  } else if (cross != null) {
+                      "Price ${ChartMath.formatPrice(renderer.priceAt(cross!!.y))}   ${timeFmt.format(Date(renderer.timeAt(cross!!.x) * 1000))}"
+                  } else ""
+                  if (info != lastInfo) { lastInfo = info; onInspect?.invoke(info) }
+
+                  postInvalidateDelayed(1000)   // lets the window advance exactly when a new candle period starts
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/ui/MainActivity.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/ui/MainActivity.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.ui
+
+          import android.app.Activity
+          import android.content.Intent
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.os.Bundle
+          import android.view.Gravity
+          import android.view.View
+          import android.widget.AdapterView
+          import android.widget.ArrayAdapter
+          import android.widget.LinearLayout
+          import android.widget.Spinner
+          import android.widget.TextView
+          import com.lmw.marketwallpaper.chart.ChartMath
+          import com.lmw.marketwallpaper.config.ConfigStore
+          import com.lmw.marketwallpaper.data.MarketEngine
+          import kotlinx.coroutines.CoroutineScope
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.SupervisorJob
+          import kotlinx.coroutines.cancel
+          import kotlinx.coroutines.launch
+
+          /** Dashboard: symbol, price, interactive chart and the three quick selectors. */
+          class MainActivity : Activity() {
+              private var scope: CoroutineScope? = null
+              private lateinit var symbolTv: TextView
+              private lateinit var priceTv: TextView
+              private lateinit var infoTv: TextView
+
+              private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+              override fun onStart() {
+                  super.onStart()
+                  setContentView(buildUi())
+                  MarketEngine.acquire(this)
+                  val s = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+                  scope = s
+                  s.launch { MarketEngine.updates.collect { refreshHeader() } }
+                  refreshHeader()
+              }
+
+              override fun onStop() {
+                  scope?.cancel()
+                  MarketEngine.release(this)
+                  super.onStop()
+              }
+
+              private fun refreshHeader() {
+                  val cfg = ConfigStore.current
+                  val snap = MarketEngine.snapshot()
+                  symbolTv.text = "${cfg.symbol}  \u00B7  ${cfg.candleTimeframe}"
+                  val last = snap.candles.lastOrNull()
+                  if (last != null && snap.symbol == cfg.symbol && snap.tf == cfg.tfSeconds) {
+                      priceTv.text = ChartMath.formatPrice(last.c)
+                      priceTv.setTextColor(Color.parseColor(if (last.c >= last.o) cfg.bullishColor else cfg.bearishColor))
+                  } else {
+                      priceTv.text = "\u2014"
+                      priceTv.setTextColor(Color.parseColor("#787B86"))
+                  }
+              }
+
+              private fun buildUi(): View {
+                  val cfg = ConfigStore.current
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setBackgroundColor(Color.parseColor(cfg.backgroundColor))
+                      fitsSystemWindows = true
+                  }
+                  val header = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(dp(12), dp(8), dp(12), 0)
+                  }
+                  symbolTv = TextView(this).apply { setTextColor(Color.parseColor("#D1D4DC")); textSize = 15f; typeface = Typeface.DEFAULT_BOLD }
+                  priceTv = TextView(this).apply { textSize = 20f; typeface = Typeface.DEFAULT_BOLD; setPadding(dp(12), 0, 0, 0) }
+                  val gear = TextView(this).apply {
+                      text = "\u2699"; textSize = 22f; setTextColor(Color.parseColor("#D1D4DC")); setPadding(dp(12), 0, 0, 0)
+                      setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
+                  }
+                  val spacer = View(this)
+                  header.addView(symbolTv)
+                  header.addView(priceTv)
+                  header.addView(spacer, LinearLayout.LayoutParams(0, 1, 1f))
+                  header.addView(gear)
+                  infoTv = TextView(this).apply {
+                      setTextColor(Color.parseColor("#787B86")); textSize = 11f; setPadding(dp(12), dp(2), dp(12), 0); minLines = 1; maxLines = 1
+                  }
+                  val chart = ChartView(this).apply { onInspect = { infoTv.text = it } }
+
+                  val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(4), 0, dp(4), dp(4)) }
+                  controls.addView(spinner(cfg.chartTypeOptions, cfg.chartType) { v -> ConfigStore.update { it.chartType = v } }, LinearLayout.LayoutParams(0, -2, 1f))
+                  controls.addView(spinner(cfg.timeframeOptions, cfg.candleTimeframe) { v -> ConfigStore.update { it.candleTimeframe = v } }, LinearLayout.LayoutParams(0, -2, 1f))
+                  controls.addView(spinner(cfg.durationOptions, cfg.displayDuration) { v -> ConfigStore.update { it.displayDuration = v } }, LinearLayout.LayoutParams(0, -2, 1f))
+
+                  root.addView(header)
+                  root.addView(infoTv)
+                  root.addView(chart, LinearLayout.LayoutParams(-1, 0, 1f))
+                  root.addView(controls)
+                  return root
+              }
+
+              private fun spinner(opts: List<String>, selected: String, onPick: (String) -> Unit): Spinner {
+                  val s = Spinner(this)
+                  s.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, opts)
+                  s.setSelection(maxOf(0, opts.indexOf(selected)), false)
+                  s.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                      override fun onItemSelected(parent: AdapterView<*>?, view: View?, pos: Int, id: Long) {
+                          if (opts[pos] != selected) onPick(opts[pos])
+                      }
+                      override fun onNothingSelected(parent: AdapterView<*>?) {}
+                  }
+                  return s
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/ui/SettingsActivity.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/ui/SettingsActivity.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.ui
+
+          import android.app.Activity
+          import android.app.WallpaperManager
+          import android.content.ActivityNotFoundException
+          import android.content.ComponentName
+          import android.content.Intent
+          import android.graphics.Color
+          import android.os.Bundle
+          import android.view.View
+          import android.widget.ArrayAdapter
+          import android.widget.Button
+          import android.widget.CheckBox
+          import android.widget.EditText
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import android.widget.Spinner
+          import android.widget.Switch
+          import android.widget.TextView
+          import android.widget.Toast
+          import com.lmw.marketwallpaper.config.ConfigStore
+          import com.lmw.marketwallpaper.data.DeltaRest
+          import com.lmw.marketwallpaper.data.Http
+          import com.lmw.marketwallpaper.wallpaper.MarketWallpaperService
+          import kotlinx.coroutines.CoroutineScope
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.SupervisorJob
+          import kotlinx.coroutines.cancel
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.withContext
+
+          class SettingsActivity : Activity() {
+              private var scope: CoroutineScope? = null
+              private var symbolsLoaded = false
+
+              private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val cfg = ConfigStore.current
+                  val s = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+                  scope = s
+
+                  val col = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(16), dp(16), dp(16), dp(24))
+                  }
+                  val root = ScrollView(this).apply {
+                      setBackgroundColor(Color.parseColor("#0B0E11")); fitsSystemWindows = true; addView(col)
+                  }
+                  fun label(t: String) = col.addView(TextView(this).apply { text = t; setTextColor(Color.parseColor("#787B86")); setPadding(0, dp(14), 0, 0) })
+                  fun spinner(opts: List<String>, sel: String): Spinner {
+                      val sp = Spinner(this)
+                      sp.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, ArrayList(opts))
+                      sp.setSelection(maxOf(0, opts.indexOf(sel)))
+                      col.addView(sp); return sp
+                  }
+                  fun hex(v: String): EditText {
+                      val e = EditText(this).apply { setText(v); setTextColor(Color.WHITE); setSingleLine() }
+                      col.addView(e); return e
+                  }
+                  fun check(t: String, on: Boolean): CheckBox {
+                      val c = CheckBox(this).apply { text = t; isChecked = on; setTextColor(Color.WHITE) }
+                      col.addView(c); return c
+                  }
+
+                  label("Symbol")
+                  val symbolSp = spinner(listOf(cfg.symbol), cfg.symbol)
+                  val symbolNote = TextView(this).apply { setTextColor(Color.parseColor("#787B86")); textSize = 11f }
+                  col.addView(symbolNote)
+                  label("Chart type"); val typeSp = spinner(cfg.chartTypeOptions, cfg.chartType)
+                  label("Candle timeframe"); val tfSp = spinner(cfg.timeframeOptions, cfg.candleTimeframe)
+                  label("Display duration"); val durSp = spinner(cfg.durationOptions, cfg.displayDuration)
+                  label("Background colour (#RRGGBB)"); val bgE = hex(cfg.backgroundColor)
+                  label("Bullish candle colour"); val upE = hex(cfg.bullishColor)
+                  label("Bearish candle colour"); val downE = hex(cfg.bearishColor)
+                  val gridC = check("Show chart grid", cfg.showGrid)
+                  val priceC = check("Show price scale", cfg.showPriceScale)
+                  val timeC = check("Show time scale", cfg.showTimeScale)
+                  val wallSw = Switch(this).apply { text = "Live wallpaper enabled"; isChecked = cfg.wallpaperEnabled; setTextColor(Color.WHITE); setPadding(0, dp(14), 0, 0) }
+                  col.addView(wallSw)
+
+                  col.addView(Button(this).apply {
+                      text = "Set as live wallpaper (home + lock screen)"
+                      setOnClickListener { openWallpaperPicker() }
+                  })
+                  col.addView(Button(this).apply {
+                      text = "Save"
+                      setOnClickListener {
+                          fun ok(h: String) = try { Color.parseColor(h); true } catch (e: Exception) { false }
+                          if (!ok(bgE.text.toString()) || !ok(upE.text.toString()) || !ok(downE.text.toString())) {
+                              Toast.makeText(this@SettingsActivity, "Colours must look like #RRGGBB", Toast.LENGTH_LONG).show(); return@setOnClickListener
+                          }
+                          val sym = symbolSp.selectedItem as String
+                          ConfigStore.update {
+                              it.symbol = sym
+                              it.chartType = typeSp.selectedItem as String
+                              it.candleTimeframe = tfSp.selectedItem as String
+                              it.displayDuration = durSp.selectedItem as String
+                              it.backgroundColor = bgE.text.toString().trim()
+                              it.bullishColor = upE.text.toString().trim()
+                              it.bearishColor = downE.text.toString().trim()
+                              it.showGrid = gridC.isChecked
+                              it.showPriceScale = priceC.isChecked
+                              it.showTimeScale = timeC.isChecked
+                              it.wallpaperEnabled = wallSw.isChecked
+                          }
+                          Toast.makeText(this@SettingsActivity, "Saved", Toast.LENGTH_SHORT).show()
+                          finish()
+                      }
+                  })
+                  setContentView(root)
+
+                  // Validate/populate the symbol list from Delta's public instrument list.
+                  s.launch {
+                      val list = withContext(Dispatchers.IO) {
+                          try { DeltaRest(Http.client, cfg.restBaseUrl).symbols() } catch (e: Exception) { null }
+                      }
+                      val opts = (list ?: (cfg.fallbackSymbols + cfg.symbol)).distinct().sorted()
+                      @Suppress("UNCHECKED_CAST")
+                      val ad = symbolSp.adapter as ArrayAdapter<String>
+                      ad.clear(); ad.addAll(opts); ad.notifyDataSetChanged()
+                      symbolSp.setSelection(maxOf(0, opts.indexOf(cfg.symbol)))
+                      symbolsLoaded = list != null
+                      symbolNote.text = if (list != null) "${opts.size} live instruments from Delta Exchange" else "Could not load the instrument list - showing fallback symbols"
+                  }
+              }
+
+              private fun openWallpaperPicker() {
+                  try {
+                      startActivity(Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).putExtra(
+                          WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, ComponentName(this, MarketWallpaperService::class.java)))
+                  } catch (e: ActivityNotFoundException) {
+                      try { startActivity(Intent(WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER)) }
+                      catch (e2: ActivityNotFoundException) { Toast.makeText(this, "Live wallpapers are not supported on this device", Toast.LENGTH_LONG).show() }
+                  }
+              }
+
+              override fun onDestroy() {
+                  scope?.cancel()
+                  super.onDestroy()
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/wallpaper/MarketWallpaperService.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/wallpaper/MarketWallpaperService.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.wallpaper
+
+          import android.graphics.Canvas
+          import android.os.Handler
+          import android.os.Looper
+          import android.service.wallpaper.WallpaperService
+          import android.view.SurfaceHolder
+          import com.lmw.marketwallpaper.chart.ChartMath
+          import com.lmw.marketwallpaper.chart.ChartRenderer
+          import com.lmw.marketwallpaper.chart.ChartStyle
+          import com.lmw.marketwallpaper.config.ConfigStore
+          import com.lmw.marketwallpaper.data.MarketEngine
+          import kotlinx.coroutines.CoroutineScope
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.SupervisorJob
+          import kotlinx.coroutines.cancel
+          import kotlinx.coroutines.launch
+
+          /**
+           * Live wallpaper. The data engine (REST + WebSocket) only runs while the wallpaper is visible
+           * (home screen or lock screen showing); when the screen turns off or an app covers it the socket
+           * is closed and drawing stops, so no foreground service or battery-optimisation exemption is needed.
+           */
+          class MarketWallpaperService : WallpaperService() {
+              override fun onCreateEngine(): Engine = ChartEngine()
+
+              inner class ChartEngine : Engine() {
+                  private val handler = Handler(Looper.getMainLooper())
+                  private val renderer = ChartRenderer(resources.displayMetrics.density)
+                  private var scope: CoroutineScope? = null
+                  private var visible = false
+                  private var w = 0
+                  private var h = 0
+                  private var dirty = true
+                  private var lastEnd = 0L
+
+                  private val tick = object : Runnable {
+                      override fun run() {
+                          draw()
+                          if (visible) handler.postDelayed(this, ConfigStore.current.wallpaperRedrawMs.toLong())
+                      }
+                  }
+
+                  override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                      w = width; h = height; dirty = true
+                      draw()
+                  }
+
+                  override fun onSurfaceRedrawNeeded(holder: SurfaceHolder) { dirty = true; draw() }
+
+                  override fun onVisibilityChanged(v: Boolean) {
+                      visible = v
+                      handler.removeCallbacks(tick)
+                      if (v) {
+                          val s = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+                          scope = s
+                          applyEnabled()
+                          s.launch { MarketEngine.updates.collect { dirty = true } }
+                          s.launch { ConfigStore.changes.collect { dirty = true; applyEnabled() } }
+                          dirty = true
+                          handler.post(tick)
+                      } else {
+                          scope?.cancel(); scope = null
+                          MarketEngine.release(this)
+                      }
+                  }
+
+                  override fun onDestroy() {
+                      visible = false
+                      handler.removeCallbacks(tick)
+                      scope?.cancel()
+                      MarketEngine.release(this)
+                      super.onDestroy()
+                  }
+
+                  /** Honours the wallpaper_enabled setting: disabled = plain background, no network at all. */
+                  private fun applyEnabled() {
+                      if (ConfigStore.current.wallpaperEnabled) MarketEngine.acquire(this) else MarketEngine.release(this)
+                  }
+
+                  private fun draw() {
+                      if (!visible || w == 0 || h == 0) return
+                      val cfg = ConfigStore.current
+                      val tf = cfg.tfSeconds
+                      val end = ChartMath.windowEnd(MarketEngine.nowSec(), tf)
+                      if (!dirty && end == lastEnd) return       // nothing changed: skip the redraw
+                      dirty = false; lastEnd = end
+
+                      val holder = surfaceHolder
+                      var cv: Canvas? = null
+                      try {
+                          cv = holder.lockCanvas() ?: return
+                          val st = ChartStyle.from(cfg)
+                          if (!cfg.wallpaperEnabled) { cv.drawColor(st.bg); return }
+                          val snap = MarketEngine.snapshot()
+                          val ok = snap.tf == tf && snap.symbol == cfg.symbol
+                          val data = if (ok) snap.candles else emptyList()
+                          val price = if (ok) snap.price else null
+                          val top = h * cfg.wallpaperChartTopPct / 100
+                          val bottom = h * cfg.wallpaperChartBottomPct / 100
+                          val ch = (h - top - bottom).coerceAtLeast(1)
+                          cv.drawColor(st.bg)
+                          cv.save()
+                          cv.translate(0f, top.toFloat())
+                          val title = "${cfg.symbol} \u00B7 ${cfg.candleTimeframe}" + (if (price != null) "   ${ChartMath.formatPrice(price)}" else "")
+                          renderer.draw(cv, w, ch, data, tf, end - cfg.durSeconds, end, st, price, null, title)
+                          cv.restore()
+                      } catch (e: Exception) {
+                          // never crash the launcher process because of a drawing problem
+                      } finally {
+                          if (cv != null) try { holder.unlockCanvasAndPost(cv) } catch (e: Exception) { }
+                      }
+                  }
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/res/drawable/ic_launcher.xml')"
+          cat > 'app/src/main/res/drawable/ic_launcher.xml' <<'LMW_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#0B0E11" android:pathData="M0,0h108v108h-108z" />
+              <path android:fillColor="#26A69A" android:pathData="M28,44h14v34h-14z" />
+              <path android:fillColor="#EF5350" android:pathData="M47,30h14v30h-14z" />
+              <path android:fillColor="#26A69A" android:pathData="M66,24h14v36h-14z" />
+          </vector>
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/res/values/strings.xml')"
+          cat > 'app/src/main/res/values/strings.xml' <<'LMW_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Market Wallpaper</string>
+          </resources>
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/res/xml/wallpaper.xml')"
+          cat > 'app/src/main/res/xml/wallpaper.xml' <<'LMW_EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <wallpaper xmlns:android="http://schemas.android.com/apk/res/android"
+              android:thumbnail="@drawable/ic_launcher"
+              android:settingsActivity="com.lmw.marketwallpaper.ui.SettingsActivity" />
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/test/kotlin/com/lmw/marketwallpaper/CandleStoreTest.kt')"
+          cat > 'app/src/test/kotlin/com/lmw/marketwallpaper/CandleStoreTest.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper
+
+          import com.lmw.marketwallpaper.data.Candle
+          import com.lmw.marketwallpaper.data.CandleStore
+          import org.junit.Assert.*
+          import org.junit.Test
+
+          class CandleStoreTest {
+              private fun c(t: Long, p: Double) = Candle(t, p, p + 1, p - 1, p)
+
+              @Test fun noDuplicatesWhenHistoryAndLiveOverlap() {
+                  val s = CandleStore(300, 100)
+                  s.merge(listOf(c(0, 10.0), c(300, 11.0), c(600, 12.0)), formingStart = 600)
+                  s.applyLive(Candle(600, 12.0, 14.0, 11.0, 13.0))
+                  s.applyLive(Candle(600, 12.0, 15.0, 11.0, 14.0))
+                  s.merge(listOf(c(600, 99.0)), formingStart = 600)          // REST forming candle must not clobber live
+                  val snap = s.snapshot()
+                  assertEquals(listOf(0L, 300L, 600L), snap.map { it.t })
+                  assertEquals(14.0, snap.last().c, 0.0)
+              }
+
+              @Test fun timestampsAreAligned() {
+                  val s = CandleStore(300, 100)
+                  s.applyLive(Candle(7, 1.0, 1.0, 1.0, 1.0))
+                  assertEquals(0L, s.snapshot().single().t)
+              }
+
+              @Test fun closedHistoryOverridesLiveForClosedCandles() {
+                  val s = CandleStore(300, 100)
+                  s.applyLive(Candle(0, 1.0, 2.0, 0.5, 1.5))
+                  s.merge(listOf(Candle(0, 1.0, 3.0, 0.5, 2.5)), formingStart = 300)
+                  assertEquals(2.5, s.snapshot().single().c, 0.0)
+              }
+
+              @Test fun staleLiveCandleIsReplacedAfterReconnect() {
+                  val s = CandleStore(300, 100)
+                  s.applyLive(Candle(600, 1.0, 2.0, 0.5, 1.5))
+                  s.markStale()
+                  s.merge(listOf(Candle(600, 1.0, 4.0, 0.5, 3.5)), formingStart = 600)
+                  assertEquals(3.5, s.snapshot().single().c, 0.0)
+              }
+
+              @Test fun memoryIsBounded() {
+                  val s = CandleStore(60, 50)
+                  s.merge((0 until 500).map { c(it * 60L, 1.0) }, formingStart = 500 * 60L)
+                  assertEquals(50, s.size())
+                  assertEquals(450 * 60L, s.snapshot().first().t)
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/test/kotlin/com/lmw/marketwallpaper/ChartMathTest.kt')"
+          cat > 'app/src/test/kotlin/com/lmw/marketwallpaper/ChartMathTest.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper
+
+          import com.lmw.marketwallpaper.chart.ChartMath
+          import org.junit.Assert.*
+          import org.junit.Test
+
+          class ChartMathTest {
+              @Test fun windowEndIsEndOfFormingCandle() {
+                  assertEquals(1_800_000_300L, ChartMath.windowEnd(1_800_000_000L + 17, 300))
+                  assertEquals(1_800_000_300L, ChartMath.windowEnd(1_800_000_000L + 299, 300))
+                  assertEquals(1_800_000_600L, ChartMath.windowEnd(1_800_000_000L + 300, 300))
+              }
+
+              @Test fun twoHourWindowOfFiveMinuteCandlesHasTwentyFour() {
+                  val end = ChartMath.windowEnd(1_800_000_123L, 300)
+                  val start = end - 7200
+                  assertEquals(24, (end - start) / 300)
+              }
+
+              @Test fun niceStepIsOneTwoFiveTimesPowerOfTen() {
+                  assertEquals(50.0, ChartMath.niceStep(250.0, 5), 1e-9)
+                  assertEquals(0.2, ChartMath.niceStep(1.0, 5), 1e-9)
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/test/kotlin/com/lmw/marketwallpaper/ConfigTest.kt')"
+          cat > 'app/src/test/kotlin/com/lmw/marketwallpaper/ConfigTest.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper
+
+          import com.lmw.marketwallpaper.config.Dur
+          import com.lmw.marketwallpaper.config.FlatYaml
+          import org.junit.Assert.*
+          import org.junit.Test
+
+          class ConfigTest {
+              @Test fun durations() {
+                  assertEquals(300L, Dur.seconds("5m"))
+                  assertEquals(7200L, Dur.seconds("2h"))
+                  assertEquals(86400L, Dur.seconds("1d"))
+                  assertEquals(86400L, Dur.seconds("24h"))
+                  assertFalse(Dur.isValid("abc"))
+              }
+
+              @Test fun parseKeepsHexColoursAndStripsComments() {
+                  val m = FlatYaml.parse("# c\nsymbol: ETHUSD   # inline\nbackground_color: \"#0B0E11\"\nshow_grid: true\n")
+                  assertEquals("ETHUSD", m["symbol"])
+                  assertEquals("#0B0E11", m["background_color"])
+                  assertEquals("true", m["show_grid"])
+              }
+
+              @Test fun dumpPreservesCommentsAndRoundTrips() {
+                  val tpl = "# header\nsymbol: ETHUSD\nbackground_color: \"#000000\"\n"
+                  val out = FlatYaml.dump(tpl, mapOf("symbol" to "BTCUSD", "background_color" to "#111111"))
+                  assertTrue(out.startsWith("# header"))
+                  val back = FlatYaml.parse(out)
+                  assertEquals("BTCUSD", back["symbol"])
+                  assertEquals("#111111", back["background_color"])
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/test/kotlin/com/lmw/marketwallpaper/LiveParserTest.kt')"
+          cat > 'app/src/test/kotlin/com/lmw/marketwallpaper/LiveParserTest.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper
+
+          import com.lmw.marketwallpaper.data.LiveParser
+          import org.junit.Assert.*
+          import org.junit.Test
+
+          class LiveParserTest {
+              private val msg = """{"type":"candlestick_5m","symbol":"ETHUSD","candle_start_time":1800000000000000,
+                  "open":"3000.5","high":3010,"low":2995.25,"close":"3005","timestamp":1800000012000000}"""
+
+              @Test fun parsesMicrosecondsAndStringNumbers() {
+                  val l = LiveParser.parse(msg, "candlestick_5m", "ETHUSD")!!
+                  assertEquals(1_800_000_000L, l.candle.t)
+                  assertEquals(3000.5, l.candle.o, 0.0)
+                  assertEquals(1_800_000_012_000L, l.serverMs)
+                  assertTrue(l.candle.live)
+              }
+
+              @Test fun ignoresOtherChannelsAndSymbols() {
+                  assertNull(LiveParser.parse(msg, "candlestick_1m", "ETHUSD"))
+                  assertNull(LiveParser.parse(msg, "candlestick_5m", "BTCUSD"))
+                  assertNull(LiveParser.parse("""{"type":"heartbeat"}""", "candlestick_5m", "ETHUSD"))
+                  assertNull(LiveParser.parse("not json", "candlestick_5m", "ETHUSD"))
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'build.gradle.kts')"
+          cat > 'build.gradle.kts' <<'LMW_EOF'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'gradle.properties')"
+          cat > 'gradle.properties' <<'LMW_EOF'
+          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+          android.useAndroidX=false
+          android.nonTransitiveRClass=true
+          kotlin.code.style=official
+          LMW_EOF
+          mkdir -p "$(dirname 'settings.gradle.kts')"
+          cat > 'settings.gradle.kts' <<'LMW_EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "LiveMarketWallpaper"
+          include(":app")
+          LMW_EOF
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Unit tests (do not block the APK)
+        continue-on-error: true
+        run: gradle --no-daemon testDebugUnitTest
+
+      - name: Build debug APK
+        run: gradle --no-daemon assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LiveMarketWallpaper-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
