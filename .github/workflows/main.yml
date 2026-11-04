@@ -325,6 +325,12 @@ jobs:
               }
           }
 
+          private val C_GRID = Color.parseColor("#1E222D")
+          private val C_AXIS = Color.parseColor("#787B86")
+          private val C_TITLE = Color.parseColor("#D1D4DC")
+          private val C_CROSS = Color.parseColor("#758696")
+          private val C_TAG = Color.parseColor("#363A45")
+
           /**
            * Draws candlesticks or a line for the time range [viewStart, viewEnd] in two layers:
            *  - static: background, grid, axis labels and every closed candle (redrawn only when something structural changes)
