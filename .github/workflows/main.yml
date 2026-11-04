@@ -108,7 +108,7 @@ jobs:
           # to the values below.
 
           # Bumped when shipped defaults change; on mismatch the endpoint/symbol keys are reset to the defaults below.
-          config_version: 4
+          config_version: 5
 
           # ---- Market data (Delta Exchange public API, no API key needed) ----
           symbol: ETHUSD
@@ -163,11 +163,14 @@ jobs:
           # ---- Order book (dashboard only; the wallpaper never subscribes to it) ----
           orderbook_enabled: true
           orderbook_levels: 10
+          # Also draw the order book on the live wallpaper (portrait: below the chart, landscape: right panel).
+          wallpaper_orderbook: true
 
           # ---- Live wallpaper ----
           wallpaper_enabled: true
-          # Minimum milliseconds between wallpaper redraws while visible (it only redraws when data changed).
-          wallpaper_redraw_ms: 250
+          # Minimum milliseconds between wallpaper frames. The wallpaper redraws the moment new data arrives
+          # (never on a timer when nothing changed); this only caps the frame rate (33 = about 30 fps).
+          wallpaper_redraw_ms: 33
           # Chart area as a percentage of screen height kept clear at the top (e.g. 30 to stay below the
           # lock-screen clock) and at the bottom. 0 = chart fills the whole screen. Landscape always uses the full screen.
           wallpaper_chart_top_pct: 0
@@ -546,6 +549,136 @@ jobs:
               }
           }
           LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/chart/OrderBookPainter.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/chart/OrderBookPainter.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.chart
+
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.graphics.RectF
+          import android.graphics.Typeface
+          import com.lmw.marketwallpaper.config.AppConfig
+          import com.lmw.marketwallpaper.data.Level
+          import com.lmw.marketwallpaper.data.OrderBook
+          import java.util.Locale
+          import kotlin.math.max
+
+          /** Draws the top-N order book (bids left, asks right, cumulative depth bars). Shared by the dashboard and the wallpaper. */
+          class OrderBookPainter(private val d: Float) {
+              private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val t = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val rect = RectF()
+              private var colCfg: AppConfig? = null
+              private var bg = 0
+              private var up = 0
+              private var down = 0
+              private var upText = 0
+              private var downText = 0
+              private var upBar = 0
+              private var downBar = 0
+
+              private val muted = Color.parseColor("#9AA0AA")
+              private val normal = Color.parseColor("#D1D4DC")
+
+              private fun colors(cfg: AppConfig) {
+                  if (cfg === colCfg) return
+                  colCfg = cfg
+                  bg = Color.parseColor(cfg.backgroundColor)
+                  up = Color.parseColor(cfg.bullishColor)
+                  down = Color.parseColor(cfg.bearishColor)
+                  upText = lighten(up); downText = lighten(down)
+                  upBar = withAlpha(up, 50); downBar = withAlpha(down, 50)
+              }
+
+              private fun lighten(c: Int): Int = Color.rgb(
+                  Color.red(c) + (255 - Color.red(c)) / 5, Color.green(c) + (255 - Color.green(c)) / 5, Color.blue(c) + (255 - Color.blue(c)) / 5)
+
+              private fun withAlpha(c: Int, a: Int) = Color.argb(a, Color.red(c), Color.green(c), Color.blue(c))
+
+              private fun size(v: Double) = when {
+                  v >= 1000 -> String.format(Locale.US, "%,.0f", v)
+                  v >= 10 -> String.format(Locale.US, "%.1f", v)
+                  else -> String.format(Locale.US, "%.2f", v)
+              }
+
+              private fun right(cv: Canvas, s: String, x: Float, y: Float) = cv.drawText(s, x - t.measureText(s), y, t)
+
+              private fun cum(l: List<Level>): DoubleArray {
+                  var s = 0.0
+                  return DoubleArray(l.size) { s += l[it].size; s }
+              }
+
+              /** Draws into a (0,0)-(w,h) area of [cv]. [clear] paints the background first (off for the wallpaper). */
+              fun draw(cv: Canvas, w: Float, h: Float, book: OrderBook?, cfg: AppConfig, clear: Boolean) {
+                  colors(cfg)
+                  if (clear) cv.drawColor(bg)
+                  val pad = 12f * d
+                  t.typeface = Typeface.DEFAULT
+                  if (book == null || (book.bids.isEmpty() && book.asks.isEmpty())) {
+                      t.color = muted; t.textSize = 12f * d
+                      val s = "Waiting for order book\u2026"
+                      cv.drawText(s, (w - t.measureText(s)) / 2, h / 2, t)
+                      return
+                  }
+
+                  var y = 4f * d
+                  t.textSize = 12f * d; t.typeface = Typeface.DEFAULT_BOLD; t.color = normal
+                  cv.drawText("Order book \u00B7 top ${cfg.orderbookLevels}", pad, y + 13f * d, t)
+                  t.typeface = Typeface.DEFAULT; t.color = muted; t.textSize = 11f * d
+                  val bb = book.bids.firstOrNull(); val ba = book.asks.firstOrNull()
+                  if (bb != null && ba != null) {
+                      val spread = ba.price - bb.price
+                      val mid = (ba.price + bb.price) / 2
+                      right(cv, "Spread ${ChartMath.formatPrice(spread)} (${String.format(Locale.US, "%.3f", spread / mid * 100)}%)", w - pad, y + 13f * d)
+                  }
+                  y += 22f * d
+
+                  val bt = book.bids.sumOf { it.size }; val at = book.asks.sumOf { it.size }
+                  val pct = if (bt + at > 0) bt / (bt + at) else 0.5
+                  val bw = w - 2 * pad
+                  p.style = Paint.Style.FILL
+                  p.color = up; rect.set(pad, y, pad + (bw * pct).toFloat(), y + 6f * d); cv.drawRect(rect, p)
+                  p.color = down; rect.set(pad + (bw * pct).toFloat(), y, pad + bw, y + 6f * d); cv.drawRect(rect, p)
+                  y += 6f * d + 12f * d
+                  t.textSize = 10.5f * d; t.color = muted
+                  cv.drawText("Bids ${size(bt)} \u00B7 ${Math.round(pct * 100)}%", pad, y, t)
+                  right(cv, "${100 - Math.round(pct * 100)}% \u00B7 ${size(at)} Asks", w - pad, y)
+                  y += 8f * d
+
+                  val gap = 6f * d
+                  val colW = (w - 2 * pad - gap) / 2
+                  val lx = pad; val rx = pad + colW + gap
+                  y += 12f * d
+                  t.textSize = 10.5f * d
+                  cv.drawText("Size", lx + 6f * d, y, t); right(cv, "Bid", lx + colW - 6f * d, y)
+                  cv.drawText("Ask", rx + 6f * d, y, t); right(cv, "Size", rx + colW - 6f * d, y)
+                  y += 6f * d
+
+                  val n = cfg.orderbookLevels
+                  val rowH = ((h - y - 2f * d) / n).coerceIn(12f * d, 26f * d)
+                  t.textSize = (rowH * 0.52f).coerceIn(10f * d, 13f * d)
+                  val cumB = cum(book.bids); val cumA = cum(book.asks)
+                  val mx = max(cumB.lastOrNull() ?: 0.0, cumA.lastOrNull() ?: 0.0).coerceAtLeast(1e-9)
+                  for (i in 0 until n) {
+                      val top = y + i * rowH
+                      val base = top + rowH / 2 + t.textSize * 0.36f
+                      book.bids.getOrNull(i)?.let { l ->
+                          p.color = upBar
+                          rect.set(lx + colW - (cumB[i] / mx * colW).toFloat(), top + 1f, lx + colW, top + rowH - 1f); cv.drawRect(rect, p)
+                          t.color = normal; cv.drawText(size(l.size), lx + 6f * d, base, t)
+                          t.color = upText; right(cv, ChartMath.formatPrice(l.price), lx + colW - 6f * d, base)
+                      }
+                      book.asks.getOrNull(i)?.let { l ->
+                          p.color = downBar
+                          rect.set(rx, top + 1f, rx + (cumA[i] / mx * colW).toFloat(), top + rowH - 1f); cv.drawRect(rect, p)
+                          t.color = downText; cv.drawText(ChartMath.formatPrice(l.price), rx + 6f * d, base, t)
+                          t.color = normal; right(cv, size(l.size), rx + colW - 6f * d, base)
+                      }
+                  }
+              }
+          }
+          LMW_EOF
           mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/config/AppConfig.kt')"
           cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/config/AppConfig.kt' <<'LMW_EOF'
           package com.lmw.marketwallpaper.config
@@ -650,6 +783,7 @@ jobs:
               var wallpaperEnabled by B("wallpaper_enabled")
               var orderbookEnabled by B("orderbook_enabled")
               var orderbookLevels by I("orderbook_levels")
+              var wallpaperOrderbook by B("wallpaper_orderbook")
               var httpTimeoutS by I("http_timeout_s")
               var reconnectMinMs by I("reconnect_min_ms")
               var reconnectMaxMs by I("reconnect_max_ms")
@@ -691,7 +825,7 @@ jobs:
               fun dataKeyDiffers(o: AppConfig) =
                   symbol != o.symbol || candleTimeframe != o.candleTimeframe || displayDuration != o.displayDuration ||
                       restBaseUrl != o.restBaseUrl || wsUrl != o.wsUrl || wsFallbackUrl != o.wsFallbackUrl ||
-                      candleSource != o.candleSource || orderbookEnabled != o.orderbookEnabled || orderbookLevels != o.orderbookLevels || maxCandles != o.maxCandles ||
+                      candleSource != o.candleSource || orderbookLevels != o.orderbookLevels || maxCandles != o.maxCandles ||
                       historyMultiplier != o.historyMultiplier
           }
           LMW_EOF
@@ -749,7 +883,7 @@ jobs:
                   m["max_candles"] = m.getValue("max_candles").toInt().coerceIn(50, 2000).toString()
                   m["history_multiplier"] = m.getValue("history_multiplier").toInt().coerceIn(1, 10).toString()
                   m["orderbook_levels"] = m.getValue("orderbook_levels").toInt().coerceIn(1, 20).toString()
-                  m["wallpaper_redraw_ms"] = m.getValue("wallpaper_redraw_ms").toInt().coerceAtLeast(100).toString()
+                  m["wallpaper_redraw_ms"] = m.getValue("wallpaper_redraw_ms").toInt().coerceAtLeast(0).toString()
               }
 
               @Synchronized
@@ -823,11 +957,37 @@ jobs:
                   ver++
               }
 
-              /** Returns false when the update changes nothing (so nobody needs to redraw). */
+              /**
+               * Applies one executed trade to the forming candle: close = price, high/low extended, new candle if a new period began.
+               * Returns false when nothing changed.
+               */
               @Synchronized
-              fun applyLive(c: Candle): Boolean {
+              fun applyTrade(tsSec: Long, price: Double): Boolean {
+                  val t = align(tsSec)
+                  val ex = map[t]
+                  val lastKey = if (map.isEmpty()) null else map.lastKey()
+                  if (lastKey != null && t < lastKey) return false           // late trade for an older candle
+                  val nc = if (ex == null) Candle(t, price, price, price, price, true) else {
+                      if (ex.c == price && ex.h >= price && ex.l <= price) return false
+                      ex.copy(h = maxOf(ex.h, price), l = minOf(ex.l, price), c = price, live = true)
+                  }
+                  map[t] = nc
+                  val trimmed = trim()
+                  cache = null
+                  if (trimmed || ex == null) ver++
+                  return true
+              }
+
+              /**
+               * Applies a candle from the candlestick channel. With [keepClose] (a trade arrived moments ago) the close we already
+               * have from the trade stream is kept so an older candle message cannot make the price jump backwards.
+               */
+              @Synchronized
+              fun applyLive(c: Candle, keepClose: Boolean = false): Boolean {
                   val t = align(c.t)
                   val ex = map[t]
+                  @Suppress("NAME_SHADOWING")
+                  val c = if (keepClose && ex != null) c.copy(h = maxOf(c.h, ex.h), l = minOf(c.l, ex.l), c = ex.c) else c
                   val lastKey = if (map.isEmpty()) null else map.lastKey()
                   if (ex != null && ex.o == c.o && ex.h == c.h && ex.l == c.l && ex.c == c.c) {
                       if (!ex.live) map[t] = ex.copy(live = true)
@@ -1028,6 +1188,7 @@ jobs:
               @Volatile var book: OrderBook? = null
                   private set
               @Volatile private var lastBookMs = 0L
+              @Volatile private var lastTradeMs = 0L
               @Volatile private var wantBook = false
               @Volatile private var activeWs: WebSocket? = null
               @Volatile private var lastRestMs = 0L
@@ -1063,15 +1224,23 @@ jobs:
                   return Snapshot(symbol, st.tf, v.candles, v.candles.lastOrNull()?.c, v.version, System.identityHashCode(st))
               }
 
-              /** The dashboard asks for the order book; the wallpaper does not, so it costs it nothing. */
-              fun setBookWanted(want: Boolean) {
-                  wantBook = want
+              private val bookOwners = HashSet<Any>()
+
+              /** Screens that draw the order book (dashboard, wallpaper) register here; the feed is subscribed while any exists. */
+              fun setBookWanted(owner: Any, want: Boolean) {
+                  val subscribeNow: Boolean
+                  synchronized(bookOwners) {
+                      val before = bookOwners.isNotEmpty()
+                      if (want) bookOwners.add(owner) else bookOwners.remove(owner)
+                      wantBook = bookOwners.isNotEmpty()
+                      if (wantBook == before) return
+                      subscribeNow = wantBook
+                  }
                   val cfg = ConfigStore.current
                   val ws = activeWs ?: return
-                  if (!cfg.orderbookEnabled) return
-                  val msg = if (want) "subscribe" else "unsubscribe"
+                  val msg = if (subscribeNow) "subscribe" else "unsubscribe"
                   ws.send("""{"type":"$msg","payload":{"channels":[{"name":"l2_orderbook","symbols":["${cfg.symbol}"]}]}}""")
-                  if (!want) { book = null; bookUpdates.tryEmit(Unit) }
+                  if (!subscribeNow) { book = null; bookUpdates.tryEmit(Unit) }
               }
 
               @Synchronized
@@ -1161,8 +1330,20 @@ jobs:
                   }
               }
 
+              /** A new candle started: confirm the one that just closed with REST data. */
+              private fun confirmLater(cfg: AppConfig, st: CandleStore, rest: DeltaRest) {
+                  scope.launch {
+                      delay(2000)
+                      try { confirmRecent(cfg, st, rest) } catch (e: Exception) { /* next reconnect will heal */ }
+                  }
+              }
+
+              /** Cheap accessors for the header: no candle-list copy. */
+              fun lastCandle(): Candle? = store.last()
+              fun matches(cfg: AppConfig): Boolean = symbol == cfg.symbol && store.tf == cfg.tfSeconds
+
               private fun pollBook(cfg: AppConfig, rest: DeltaRest) {
-                  if (!cfg.orderbookEnabled || !wantBook) return
+                  if (!wantBook) return
                   try {
                       val b = rest.orderBook(cfg.symbol, cfg.orderbookLevels)
                       lastBookMs = SystemClock.elapsedRealtime()
@@ -1201,8 +1382,10 @@ jobs:
                   val lastMsg = AtomicLong(SystemClock.elapsedRealtime())
                   val got = AtomicBoolean(false)
                   val lastCandle = AtomicLong(0L)
-                  val bookChannel = if (cfg.orderbookEnabled && wantBook) ""","{"name":"l2_orderbook","symbols":["${cfg.symbol}"]}""" else ""
-                  val subscribe = """{"type":"subscribe","payload":{"channels":[{"name":"$channel","symbols":["${cfg.dataSymbol}"]}$bookChannel]}}"""
+                  val bookChannel = if (wantBook) ""","{"name":"l2_orderbook","symbols":["${cfg.symbol}"]}""" else ""
+                  // all_trades moves the forming candle on every executed trade (only meaningful for last-price candles).
+                  val tradeChannel = if (cfg.candleSource == "trade") ""","{"name":"all_trades","symbols":["${cfg.symbol}"]}""" else ""
+                  val subscribe = """{"type":"subscribe","payload":{"channels":[{"name":"$channel","symbols":["${cfg.dataSymbol}"]}$tradeChannel$bookChannel]}}"""
 
                   val url = if (useFallbackUrl && cfg.wsFallbackUrl.isNotBlank()) cfg.wsFallbackUrl else cfg.wsUrl
                   val ws: WebSocket = Http.client.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
@@ -1226,18 +1409,26 @@ jobs:
                               }
                               return
                           }
+                          if (text.contains("all_trades")) {
+                              TradeParser.parse(text, cfg.symbol)?.let { tr ->
+                                  lastTradeMs = SystemClock.elapsedRealtime()
+                                  lastCandle.set(lastTradeMs)
+                                  val prev = st.last()?.t
+                                  val ts = tr.tsSec ?: nowSec()
+                                  if (st.applyTrade(ts, tr.price)) {
+                                      if (prev != null && st.align(ts) > prev) confirmLater(cfg, st, rest)
+                                      updates.tryEmit(Unit)
+                                  }
+                              }
+                              return
+                          }
                           val live = LiveParser.parse(text, channel, cfg.dataSymbol) ?: return
                           lastCandle.set(SystemClock.elapsedRealtime())
                           live.serverMs?.let { offsetMs = it - System.currentTimeMillis(); wsOffsetKnown = true }
                           val prevLast = st.last()?.t
-                          val changed = st.applyLive(live.candle)
-                          if (prevLast != null && st.align(live.candle.t) > prevLast) {
-                              // A new candle started: confirm the one that just closed with REST data.
-                              scope.launch {
-                                  delay(2000)
-                                  try { confirmRecent(cfg, st, rest) } catch (e: Exception) { /* next reconnect will heal */ }
-                              }
-                          }
+                          val keep = SystemClock.elapsedRealtime() - lastTradeMs < 3000
+                          val changed = st.applyLive(live.candle, keep)
+                          if (prevLast != null && st.align(live.candle.t) > prevLast) confirmLater(cfg, st, rest)
                           if (changed) updates.tryEmit(Unit)
                       }
 
@@ -1253,7 +1444,7 @@ jobs:
                           val now = SystemClock.elapsedRealtime()
                           if (now - lastMsg.get() > cfg.wsStaleSeconds * 1000L) break
                           // Socket is up but no candle data for 15 s (quiet market or unexpected format): refresh via REST.
-                          if (cfg.orderbookEnabled && wantBook && now - lastBookMs > 6_000 && now - lastBookPoll > 4_000) {
+                          if (wantBook && now - lastBookMs > 6_000 && now - lastBookPoll > 4_000) {
                               lastBookPoll = now
                               pollBook(cfg, rest)
                           }
@@ -1308,6 +1499,28 @@ jobs:
                   if (j.has("symbol") && j.optString("symbol") != symbol) return null
                   val b = fromObject(j, max)
                   return if (b.bids.isEmpty() && b.asks.isEmpty()) null else b
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/data/TradeParser.kt')"
+          cat > 'app/src/main/kotlin/com/lmw/marketwallpaper/data/TradeParser.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper.data
+
+          import org.json.JSONObject
+
+          /** Parses Delta `all_trades` WebSocket messages: every executed trade, used to move the forming candle instantly. */
+          object TradeParser {
+              data class Trade(val price: Double, val tsSec: Long?)
+
+              fun parse(text: String, symbol: String): Trade? {
+                  if (!text.contains("all_trades")) return null
+                  val j = try { JSONObject(text) } catch (e: Exception) { return null }
+                  if (j.optString("type") != "all_trades") return null          // ignores the snapshot and the subscribe ack
+                  if (j.has("symbol") && j.optString("symbol") != symbol) return null
+                  val p = j.optDouble("price", Double.NaN)
+                  if (p.isNaN() || p <= 0.0) return null
+                  val ts = j.optLong("timestamp", -1L)
+                  return Trade(p, if (ts > 0) LiveParser.toSec(ts) else null)
               }
           }
           LMW_EOF
@@ -1515,7 +1728,7 @@ jobs:
               override fun onStart() {
                   super.onStart()
                   setContentView(buildUi())
-                  MarketEngine.setBookWanted(true)
+                  MarketEngine.setBookWanted(this, ConfigStore.current.orderbookEnabled)
                   MarketEngine.acquire(this)
                   val s = CoroutineScope(SupervisorJob() + Dispatchers.Main)
                   scope = s
@@ -1525,7 +1738,7 @@ jobs:
 
               override fun onStop() {
                   scope?.cancel()
-                  MarketEngine.setBookWanted(false)
+                  MarketEngine.setBookWanted(this, false)
                   MarketEngine.release(this)
                   super.onStop()
               }
@@ -1534,7 +1747,6 @@ jobs:
 
               private fun refreshHeader() {
                   val cfg = ConfigStore.current
-                  val snap = MarketEngine.snapshot()
                   val status = MarketEngine.status()
                   val live = status == "LIVE"
                   val src = if (cfg.candleSource == "mark") " \u00B7 mark" else ""
@@ -1545,8 +1757,8 @@ jobs:
                   val sline = if (!live && err.isNotEmpty()) "Data: $err" else ""
                   statusTv.setIfChanged(sline)
                   statusTv.visibility = if (sline.isEmpty()) View.GONE else View.VISIBLE
-                  val last = snap.candles.lastOrNull()
-                  if (last != null && snap.symbol == cfg.symbol && snap.tf == cfg.tfSeconds) {
+                  val last = MarketEngine.lastCandle()
+                  if (last != null && MarketEngine.matches(cfg)) {
                       priceTv.setIfChanged(ChartMath.formatPrice(last.c))
                       priceTv.setTextColor(Color.parseColor(if (last.c >= last.o) cfg.bullishColor else cfg.bearishColor))
                   } else {
@@ -1637,46 +1849,27 @@ jobs:
 
           import android.content.Context
           import android.graphics.Canvas
-          import android.graphics.Color
-          import android.graphics.Paint
-          import android.graphics.RectF
-          import android.graphics.Typeface
           import android.view.View
-          import com.lmw.marketwallpaper.chart.ChartMath
-          import com.lmw.marketwallpaper.config.AppConfig
+          import com.lmw.marketwallpaper.chart.OrderBookPainter
           import com.lmw.marketwallpaper.config.ConfigStore
-          import com.lmw.marketwallpaper.data.Level
           import com.lmw.marketwallpaper.data.MarketEngine
           import kotlinx.coroutines.CoroutineScope
           import kotlinx.coroutines.Dispatchers
           import kotlinx.coroutines.SupervisorJob
           import kotlinx.coroutines.cancel
           import kotlinx.coroutines.launch
-          import java.util.Locale
-          import kotlin.math.max
 
-          /** Top-N bids (left, green) and asks (right, red) with cumulative depth bars, spread and bid/ask balance. */
+          /** Dashboard order book: redraws once per frame, only when the book (or config) changed. */
           class OrderBookView(ctx: Context) : View(ctx) {
-              private val d = resources.displayMetrics.density
-              private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-              private val t = Paint(Paint.ANTI_ALIAS_FLAG)
-              private val rect = RectF()
+              private val painter = OrderBookPainter(resources.displayMetrics.density)
               private var scope: CoroutineScope? = null
-              private var colCfg: AppConfig? = null
-              private var up = 0
-              private var down = 0
-              private var upText = 0
-              private var downText = 0
-
-              private val muted = Color.parseColor("#9AA0AA")
-              private val normal = Color.parseColor("#D1D4DC")
 
               override fun onAttachedToWindow() {
                   super.onAttachedToWindow()
                   val s = CoroutineScope(SupervisorJob() + Dispatchers.Main)
                   scope = s
                   s.launch { MarketEngine.bookUpdates.collect { postInvalidateOnAnimation() } }
-                  s.launch { MarketEngine.updates.collect { postInvalidateOnAnimation() } }
+                  s.launch { MarketEngine.updates.collect { /* config/status changes only matter for colours */ } }
               }
 
               override fun onDetachedFromWindow() {
@@ -1684,108 +1877,9 @@ jobs:
                   super.onDetachedFromWindow()
               }
 
-              private fun colors(cfg: AppConfig) {
-                  if (cfg === colCfg) return
-                  colCfg = cfg
-                  up = Color.parseColor(cfg.bullishColor)
-                  down = Color.parseColor(cfg.bearishColor)
-                  upText = lighten(up); downText = lighten(down)
-              }
-
-              private fun lighten(c: Int): Int = Color.rgb(
-                  Color.red(c) + (255 - Color.red(c)) / 5, Color.green(c) + (255 - Color.green(c)) / 5, Color.blue(c) + (255 - Color.blue(c)) / 5)
-
-              private fun size(v: Double) = when {
-                  v >= 1000 -> String.format(Locale.US, "%,.0f", v)
-                  v >= 10 -> String.format(Locale.US, "%.1f", v)
-                  else -> String.format(Locale.US, "%.2f", v)
-              }
-
-              private fun right(cv: Canvas, s: String, x: Float, y: Float) = cv.drawText(s, x - t.measureText(s), y, t)
-
               override fun onDraw(cv: Canvas) {
-                  val cfg = ConfigStore.current
-                  colors(cfg)
-                  cv.drawColor(Color.parseColor(cfg.backgroundColor))
-                  val w = width.toFloat(); val h = height.toFloat()
-                  val pad = 12f * d
-                  val book = MarketEngine.book
-                  t.typeface = Typeface.DEFAULT
-                  if (book == null || (book.bids.isEmpty() && book.asks.isEmpty())) {
-                      t.color = muted; t.textSize = 12f * d
-                      val s = "Waiting for order book\u2026"
-                      cv.drawText(s, (w - t.measureText(s)) / 2, h / 2, t)
-                      return
-                  }
-
-                  // Title + spread
-                  var y = 4f * d
-                  t.textSize = 12f * d; t.typeface = Typeface.DEFAULT_BOLD; t.color = normal
-                  cv.drawText("Order book \u00B7 top ${cfg.orderbookLevels}", pad, y + 13f * d, t)
-                  t.typeface = Typeface.DEFAULT; t.color = muted; t.textSize = 11f * d
-                  val bb = book.bids.firstOrNull(); val ba = book.asks.firstOrNull()
-                  if (bb != null && ba != null) {
-                      val spread = ba.price - bb.price
-                      val mid = (ba.price + bb.price) / 2
-                      right(cv, "Spread ${ChartMath.formatPrice(spread)} (${String.format(Locale.US, "%.3f", spread / mid * 100)}%)", w - pad, y + 13f * d)
-                  }
-                  y += 22f * d
-
-                  // Bid / ask balance bar
-                  val bt = book.bids.sumOf { it.size }; val at = book.asks.sumOf { it.size }
-                  val pct = if (bt + at > 0) bt / (bt + at) else 0.5
-                  val bw = w - 2 * pad
-                  p.style = Paint.Style.FILL
-                  p.color = up; rect.set(pad, y, pad + (bw * pct).toFloat(), y + 6f * d); cv.drawRect(rect, p)
-                  p.color = down; rect.set(pad + (bw * pct).toFloat(), y, pad + bw, y + 6f * d); cv.drawRect(rect, p)
-                  y += 6f * d + 12f * d
-                  t.textSize = 10.5f * d; t.color = muted
-                  cv.drawText("Bids ${size(bt)} \u00B7 ${Math.round(pct * 100)}%", pad, y, t)
-                  right(cv, "${100 - Math.round(pct * 100)}% \u00B7 ${size(at)} Asks", w - pad, y)
-                  y += 8f * d
-
-                  // Column headers
-                  val gap = 6f * d
-                  val colW = (w - 2 * pad - gap) / 2
-                  val lx = pad; val rx = pad + colW + gap
-                  y += 12f * d
-                  t.textSize = 10.5f * d
-                  cv.drawText("Size", lx + 6f * d, y, t); right(cv, "Bid", lx + colW - 6f * d, y)
-                  cv.drawText("Ask", rx + 6f * d, y, t); right(cv, "Size", rx + colW - 6f * d, y)
-                  y += 6f * d
-
-                  // Rows
-                  val n = cfg.orderbookLevels
-                  val rowH = ((h - y - 2f * d) / n).coerceIn(12f * d, 26f * d)
-                  t.textSize = (rowH * 0.52f).coerceIn(10f * d, 13f * d)
-                  val cumB = cum(book.bids); val cumA = cum(book.asks)
-                  val mx = max(cumB.lastOrNull() ?: 0.0, cumA.lastOrNull() ?: 0.0).coerceAtLeast(1e-9)
-                  for (i in 0 until n) {
-                      val top = y + i * rowH
-                      val base = top + rowH / 2 + t.textSize * 0.36f
-                      book.bids.getOrNull(i)?.let { l ->
-                          p.color = withAlpha(up, 50)
-                          val bwid = (cumB[i] / mx * colW).toFloat()
-                          rect.set(lx + colW - bwid, top + 1f, lx + colW, top + rowH - 1f); cv.drawRect(rect, p)
-                          t.color = normal; cv.drawText(size(l.size), lx + 6f * d, base, t)
-                          t.color = upText; right(cv, ChartMath.formatPrice(l.price), lx + colW - 6f * d, base)
-                      }
-                      book.asks.getOrNull(i)?.let { l ->
-                          p.color = withAlpha(down, 50)
-                          val awid = (cumA[i] / mx * colW).toFloat()
-                          rect.set(rx, top + 1f, rx + awid, top + rowH - 1f); cv.drawRect(rect, p)
-                          t.color = downText; cv.drawText(ChartMath.formatPrice(l.price), rx + 6f * d, base, t)
-                          t.color = normal; right(cv, size(l.size), rx + colW - 6f * d, base)
-                      }
-                  }
+                  painter.draw(cv, width.toFloat(), height.toFloat(), MarketEngine.book, ConfigStore.current, true)
               }
-
-              private fun cum(l: List<Level>): DoubleArray {
-                  var s = 0.0
-                  return DoubleArray(l.size) { s += l[it].size; s }
-              }
-
-              private fun withAlpha(c: Int, a: Int) = Color.argb(a, Color.red(c), Color.green(c), Color.blue(c))
           }
           LMW_EOF
           mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/ui/SettingsActivity.kt')"
@@ -1871,7 +1965,8 @@ jobs:
                   val gridC = check("Show chart grid", cfg.showGrid)
                   val priceC = check("Show price scale", cfg.showPriceScale)
                   val timeC = check("Show time scale", cfg.showTimeScale)
-                  val bookC = check("Show order book (dashboard)", cfg.orderbookEnabled)
+                  val bookC = check("Show order book on dashboard", cfg.orderbookEnabled)
+                  val wallBookC = check("Show order book on wallpaper", cfg.wallpaperOrderbook)
                   val wallSw = Switch(this).apply { text = "Live wallpaper enabled"; isChecked = cfg.wallpaperEnabled; setTextColor(Color.WHITE); setPadding(0, dp(14), 0, 0) }
                   col.addView(wallSw)
 
@@ -1901,6 +1996,7 @@ jobs:
                               it.showPriceScale = priceC.isChecked
                               it.showTimeScale = timeC.isChecked
                               it.orderbookEnabled = bookC.isChecked
+                              it.wallpaperOrderbook = wallBookC.isChecked
                               it.wallpaperEnabled = wallSw.isChecked
                           }
                           Toast.makeText(this@SettingsActivity, "Saved", Toast.LENGTH_SHORT).show()
@@ -1947,10 +2043,12 @@ jobs:
           import android.graphics.Canvas
           import android.os.Handler
           import android.os.Looper
+          import android.os.SystemClock
           import android.service.wallpaper.WallpaperService
           import android.view.SurfaceHolder
-          import com.lmw.marketwallpaper.chart.ChartMath
           import com.lmw.marketwallpaper.chart.CachedChart
+          import com.lmw.marketwallpaper.chart.ChartMath
+          import com.lmw.marketwallpaper.chart.OrderBookPainter
           import com.lmw.marketwallpaper.config.ConfigStore
           import com.lmw.marketwallpaper.data.MarketEngine
           import kotlinx.coroutines.CoroutineScope
@@ -1960,28 +2058,42 @@ jobs:
           import kotlinx.coroutines.launch
 
           /**
-           * Live wallpaper. The data engine (REST + WebSocket) only runs while the wallpaper is visible
-           * (home screen or lock screen showing); when the screen turns off or an app covers it the socket
-           * is closed and drawing stops, so no foreground service or battery-optimisation exemption is needed.
+           * Live wallpaper. Event driven: a frame is drawn as soon as a price tick or order-book update arrives (capped by
+           * wallpaper_redraw_ms), and nothing is drawn while nothing changes. The data engine only runs while the wallpaper
+           * is visible, so no foreground service or battery-optimisation exemption is needed.
            */
           class MarketWallpaperService : WallpaperService() {
               override fun onCreateEngine(): Engine = ChartEngine()
 
               inner class ChartEngine : Engine() {
                   private val handler = Handler(Looper.getMainLooper())
-                  private val chart = CachedChart(resources.displayMetrics.density)
+                  private val density = resources.displayMetrics.density
+                  private val chart = CachedChart(density)
+                  private val bookPainter = OrderBookPainter(density)
                   private var scope: CoroutineScope? = null
                   private var visible = false
                   private var w = 0
                   private var h = 0
                   private var dirty = true
                   private var lastEnd = 0L
+                  private var lastDraw = 0L
+                  private var framePending = false
 
+                  private val frame = Runnable { framePending = false; draw() }
+
+                  /** Slow safety tick: only needed so the window advances when a new candle period starts. */
                   private val tick = object : Runnable {
                       override fun run() {
                           draw()
-                          if (visible) handler.postDelayed(this, ConfigStore.current.wallpaperRedrawMs.toLong())
+                          if (visible) handler.postDelayed(this, 1000)
                       }
+                  }
+
+                  private fun requestFrame() {
+                      if (!visible || framePending) return
+                      framePending = true
+                      val wait = (lastDraw + ConfigStore.current.wallpaperRedrawMs - SystemClock.uptimeMillis()).coerceAtLeast(0L)
+                      if (wait == 0L) handler.post(frame) else handler.postDelayed(frame, wait)
                   }
 
                   override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -1993,33 +2105,38 @@ jobs:
 
                   override fun onVisibilityChanged(v: Boolean) {
                       visible = v
-                      handler.removeCallbacks(tick)
+                      handler.removeCallbacks(tick); handler.removeCallbacks(frame); framePending = false
                       if (v) {
                           val s = CoroutineScope(SupervisorJob() + Dispatchers.Main)
                           scope = s
                           applyEnabled()
-                          s.launch { MarketEngine.updates.collect { dirty = true } }
-                          s.launch { ConfigStore.changes.collect { dirty = true; applyEnabled() } }
+                          s.launch { MarketEngine.updates.collect { dirty = true; requestFrame() } }
+                          s.launch { MarketEngine.bookUpdates.collect { dirty = true; requestFrame() } }
+                          s.launch { ConfigStore.changes.collect { dirty = true; applyEnabled(); requestFrame() } }
                           dirty = true
                           handler.post(tick)
                       } else {
                           scope?.cancel(); scope = null
+                          MarketEngine.setBookWanted(this, false)
                           MarketEngine.release(this)
                       }
                   }
 
                   override fun onDestroy() {
                       visible = false
-                      handler.removeCallbacks(tick)
+                      handler.removeCallbacks(tick); handler.removeCallbacks(frame)
                       scope?.cancel()
+                      MarketEngine.setBookWanted(this, false)
                       MarketEngine.release(this)
                       chart.release()
                       super.onDestroy()
                   }
 
-                  /** Honours the wallpaper_enabled setting: disabled = plain background, no network at all. */
+                  /** wallpaper_enabled off = plain background and no network at all. Order book feed only when it is shown. */
                   private fun applyEnabled() {
-                      if (ConfigStore.current.wallpaperEnabled) MarketEngine.acquire(this) else MarketEngine.release(this)
+                      val cfg = ConfigStore.current
+                      if (cfg.wallpaperEnabled) MarketEngine.acquire(this) else MarketEngine.release(this)
+                      MarketEngine.setBookWanted(this, cfg.wallpaperEnabled && cfg.wallpaperOrderbook)
                   }
 
                   private fun draw() {
@@ -2027,29 +2144,44 @@ jobs:
                       val cfg = ConfigStore.current
                       val tf = cfg.tfSeconds
                       val end = ChartMath.windowEnd(MarketEngine.nowSec(), tf)
-                      if (!dirty && end == lastEnd) return       // nothing changed: skip the redraw
-                      dirty = false; lastEnd = end
+                      if (!dirty && end == lastEnd) return            // nothing changed: no redraw
+                      dirty = false; lastEnd = end; lastDraw = SystemClock.uptimeMillis()
 
                       val holder = surfaceHolder
                       var cv: Canvas? = null
                       try {
-                          cv = holder.lockCanvas() ?: return
+                          cv = (try { holder.lockHardwareCanvas() } catch (e: Exception) { null }) ?: holder.lockCanvas() ?: return
                           val st = chart.styleFor(cfg)
-                          if (!cfg.wallpaperEnabled) { cv.drawColor(st.bg); return }
+                          cv.drawColor(st.bg)
+                          if (!cfg.wallpaperEnabled) return
                           val snap = MarketEngine.snapshot()
                           val ok = snap.tf == tf && snap.symbol == cfg.symbol
                           val data = if (ok) snap.candles else emptyList()
                           val price = if (ok) snap.price else null
+
                           // Portrait keeps a clear band for the lock-screen clock; landscape (and top=0) uses the full screen.
                           val landscape = w > h
                           val top = if (landscape) 0 else h * cfg.wallpaperChartTopPct / 100
                           val bottom = if (landscape) 0 else h * cfg.wallpaperChartBottomPct / 100
                           val ch = (h - top - bottom).coerceAtLeast(1)
-                          cv.drawColor(st.bg)
+                          val title = "${cfg.symbol} \u00B7 ${cfg.candleTimeframe}" + (if (price != null) "   ${ChartMath.formatPrice(price)}" else "")
+                          val vs = end - cfg.durSeconds
+
                           cv.save()
                           cv.translate(0f, top.toFloat())
-                          val title = "${cfg.symbol} \u00B7 ${cfg.candleTimeframe}" + (if (price != null) "   ${ChartMath.formatPrice(price)}" else "")
-                          chart.draw(cv, w, ch, data, snap.version, snap.id, tf, end - cfg.durSeconds, end, st, price, null, title)
+                          if (!cfg.wallpaperOrderbook) {
+                              chart.draw(cv, w, ch, data, snap.version, snap.id, tf, vs, end, st, price, null, title)
+                          } else if (landscape) {
+                              val bw = minOf((260 * density).toInt(), w * 2 / 5)
+                              chart.draw(cv, w - bw, ch, data, snap.version, snap.id, tf, vs, end, st, price, null, title)
+                              cv.translate((w - bw).toFloat(), 0f)
+                              bookPainter.draw(cv, bw.toFloat(), ch.toFloat(), MarketEngine.book, cfg, false)
+                          } else {
+                              val bh = minOf(((cfg.orderbookLevels * 22 + 96) * density).toInt(), ch / 2)
+                              chart.draw(cv, w, ch - bh, data, snap.version, snap.id, tf, vs, end, st, price, null, title)
+                              cv.translate(0f, (ch - bh).toFloat())
+                              bookPainter.draw(cv, w.toFloat(), bh.toFloat(), MarketEngine.book, cfg, false)
+                          }
                           cv.restore()
                       } catch (e: Exception) {
                           // never crash the launcher process because of a drawing problem
@@ -2277,6 +2409,47 @@ jobs:
                   assertNull(LiveParser.parse(msg, "candlestick_5m", "BTCUSD"))
                   assertNull(LiveParser.parse("""{"type":"heartbeat"}""", "candlestick_5m", "ETHUSD"))
                   assertNull(LiveParser.parse("not json", "candlestick_5m", "ETHUSD"))
+              }
+          }
+          LMW_EOF
+          mkdir -p "$(dirname 'app/src/test/kotlin/com/lmw/marketwallpaper/TradeTest.kt')"
+          cat > 'app/src/test/kotlin/com/lmw/marketwallpaper/TradeTest.kt' <<'LMW_EOF'
+          package com.lmw.marketwallpaper
+
+          import com.lmw.marketwallpaper.data.Candle
+          import com.lmw.marketwallpaper.data.CandleStore
+          import com.lmw.marketwallpaper.data.TradeParser
+          import org.junit.Assert.*
+          import org.junit.Test
+
+          class TradeTest {
+              @Test fun parsesTradesAndIgnoresSnapshotAndAck() {
+                  val m = """{"type":"all_trades","symbol":"ETHUSD","price":"2245.55","size":3,"timestamp":1800000012000000}"""
+                  val t = TradeParser.parse(m, "ETHUSD")!!
+                  assertEquals(2245.55, t.price, 0.0)
+                  assertEquals(1_800_000_012L, t.tsSec)
+                  assertNull(TradeParser.parse("""{"type":"all_trades_snapshot","symbol":"ETHUSD","trades":[]}""", "ETHUSD"))
+                  assertNull(TradeParser.parse("""{"type":"subscriptions","channels":[{"name":"all_trades"}]}""", "ETHUSD"))
+              }
+
+              @Test fun tradesMoveTheFormingCandleAndOpenNewOnes() {
+                  val s = CandleStore(300, 100)
+                  s.merge(listOf(Candle(0, 10.0, 11.0, 9.0, 10.5)), formingStart = 0)
+                  assertTrue(s.applyTrade(100, 12.0))
+                  assertEquals(12.0, s.last()!!.c, 0.0); assertEquals(12.0, s.last()!!.h, 0.0)
+                  assertFalse(s.applyTrade(110, 12.0))                       // same price again: no change
+                  assertTrue(s.applyTrade(310, 8.0))                         // new period
+                  assertEquals(2, s.size()); assertEquals(300L, s.last()!!.t)
+                  assertFalse(s.applyTrade(120, 99.0))                       // late trade for an older candle is ignored
+              }
+
+              @Test fun candleMessageDoesNotRevertCloseWhenTradeIsFresh() {
+                  val s = CandleStore(300, 100)
+                  s.applyTrade(10, 5.0); s.applyTrade(11, 6.0)
+                  s.applyLive(Candle(0, 5.0, 6.0, 5.0, 5.0), keepClose = true)
+                  assertEquals(6.0, s.last()!!.c, 0.0)
+                  s.applyLive(Candle(0, 5.0, 7.0, 5.0, 6.5), keepClose = false)
+                  assertEquals(6.5, s.last()!!.c, 0.0)
               }
           }
           LMW_EOF
