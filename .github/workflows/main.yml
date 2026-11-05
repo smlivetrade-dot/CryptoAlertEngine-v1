@@ -108,7 +108,7 @@ jobs:
           # to the values below.
 
           # Bumped when shipped defaults change; on mismatch the endpoint/symbol keys are reset to the defaults below.
-          config_version: 5
+          config_version: 6
 
           # ---- Market data (Delta Exchange public API, no API key needed) ----
           symbol: ETHUSD
@@ -151,6 +151,9 @@ jobs:
           timeframe_options: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 1d
           display_duration: 2h
           duration_options: 15m, 30m, 1h, 2h, 4h, 8h, 12h, 24h
+          # Empty space kept to the right of the live candle, as a percentage of the visible time span
+          # (so the forming candle is never hidden behind the price tag / screen edge). 0 = flush right.
+          chart_right_gap_pct: 8
 
           # ---- Appearance ----
           background_color: "#0B0E11"
@@ -180,7 +183,7 @@ jobs:
           wallpaper_redraw_ms: 33
           # Chart area as a percentage of screen height kept clear at the top (e.g. 30 to stay below the
           # lock-screen clock) and at the bottom. 0 = chart fills the whole screen. Landscape always uses the full screen.
-          wallpaper_chart_top_pct: 0
+          wallpaper_chart_top_pct: 4
           wallpaper_chart_bottom_pct: 0
           LMW_EOF
           mkdir -p "$(dirname 'app/src/main/kotlin/com/lmw/marketwallpaper/App.kt')"
@@ -790,6 +793,7 @@ jobs:
               var wallpaperEnabled by B("wallpaper_enabled")
               var orderbookEnabled by B("orderbook_enabled")
               var orderbookLevels by I("orderbook_levels")
+              var chartRightGapPct by I("chart_right_gap_pct")
               var atrEnabled by B("atr_enabled")
               var atrPeriod by I("atr_period")
               var atrRecalcSeconds by I("atr_recalc_seconds")
@@ -887,13 +891,14 @@ jobs:
               private fun sanitize(m: MutableMap<String, String>) {
                   for (k in listOf("candle_timeframe", "display_duration")) if (!Dur.isValid(m[k] ?: "")) m[k] = defaults.getValue(k)
                   for (k in listOf("max_candles", "history_multiplier", "http_timeout_s", "reconnect_min_ms", "reconnect_max_ms",
-                      "ws_stale_seconds", "wallpaper_redraw_ms", "orderbook_levels", "atr_period", "atr_recalc_seconds", "wallpaper_chart_top_pct", "wallpaper_chart_bottom_pct")) {
+                      "ws_stale_seconds", "wallpaper_redraw_ms", "orderbook_levels", "atr_period", "atr_recalc_seconds", "chart_right_gap_pct", "wallpaper_chart_top_pct", "wallpaper_chart_bottom_pct")) {
                       if (m[k]?.toIntOrNull() == null) m[k] = defaults.getValue(k)
                   }
                   m["max_candles"] = m.getValue("max_candles").toInt().coerceIn(50, 2000).toString()
                   m["history_multiplier"] = m.getValue("history_multiplier").toInt().coerceIn(1, 10).toString()
                   m["atr_period"] = m.getValue("atr_period").toInt().coerceIn(1, 100).toString()
                   m["atr_recalc_seconds"] = m.getValue("atr_recalc_seconds").toInt().coerceIn(5, 3600).toString()
+                  m["chart_right_gap_pct"] = m.getValue("chart_right_gap_pct").toInt().coerceIn(0, 40).toString()
                   m["orderbook_levels"] = m.getValue("orderbook_levels").toInt().coerceIn(1, 20).toString()
                   m["wallpaper_redraw_ms"] = m.getValue("wallpaper_redraw_ms").toInt().coerceAtLeast(0).toString()
               }
@@ -1734,7 +1739,7 @@ jobs:
                   clampPan()
 
                   val liveEnd = ChartMath.windowEnd(MarketEngine.nowSec(), tf)
-                  val ve = liveEnd - panSec.toLong()
+                  val ve = liveEnd + (span * cfg.chartRightGapPct / 100).toLong() - panSec.toLong()
                   val vs = ve - span.toLong()
                   val found = chartC.draw(cv, width, height, data, snap.version, snap.id, tf, vs, ve, styleFor(cfg), price, cross, null)
 
@@ -2274,20 +2279,22 @@ jobs:
                           val atrNow = if (cfg.atrEnabled) MarketEngine.atr else null
                           val title = "${cfg.symbol} \u00B7 ${cfg.candleTimeframe}" + (if (price != null) "   ${ChartMath.formatPrice(price)}" else "") +
                               (if (atrNow != null) "   ATR ${ChartMath.formatPrice(atrNow.value)}" else "")
-                          val vs = end - cfg.durSeconds
+                          val gap = cfg.durSeconds * cfg.chartRightGapPct / 100       // breathing room right of the live candle
+                          val ve = end + gap
+                          val vs = ve - cfg.durSeconds
 
                           cv.save()
                           cv.translate(0f, top.toFloat())
                           if (!cfg.wallpaperOrderbook) {
-                              chart.draw(cv, w, ch, data, snap.version, snap.id, tf, vs, end, st, price, null, title)
+                              chart.draw(cv, w, ch, data, snap.version, snap.id, tf, vs, ve, st, price, null, title)
                           } else if (landscape) {
                               val bw = minOf((260 * density).toInt(), w * 2 / 5)
-                              chart.draw(cv, w - bw, ch, data, snap.version, snap.id, tf, vs, end, st, price, null, title)
+                              chart.draw(cv, w - bw, ch, data, snap.version, snap.id, tf, vs, ve, st, price, null, title)
                               cv.translate((w - bw).toFloat(), 0f)
                               bookPainter.draw(cv, bw.toFloat(), ch.toFloat(), MarketEngine.book, cfg, false)
                           } else {
                               val bh = minOf(((cfg.orderbookLevels * 22 + 96) * density).toInt(), ch / 2)
-                              chart.draw(cv, w, ch - bh, data, snap.version, snap.id, tf, vs, end, st, price, null, title)
+                              chart.draw(cv, w, ch - bh, data, snap.version, snap.id, tf, vs, ve, st, price, null, title)
                               cv.translate(0f, (ch - bh).toFloat())
                               bookPainter.draw(cv, w.toFloat(), bh.toFloat(), MarketEngine.book, cfg, false)
                           }
