@@ -3,8 +3,8 @@ name: Build Android APK
 # Paste as: .github/workflows/build-apk.yml  (replace the old file)
 # Self-contained: the whole Android project is generated inside this workflow.
 # Data: Delta Exchange India PUBLIC API (no key).
-# App: flexible pattern matching - any timeframe (1m..4h), any pattern length,
-#      any look-ahead, multi-year history (cached on phone), stats + charts.
+# App: live pattern matching - symbol, timeframe, pattern length, prediction length,
+#      multi-year history cached on phone, live updates, background notification.
 
 on:
   push:
@@ -55,42 +55,12 @@ jobs:
       - name: Generate Android project
         run: |
           set -e
+          mkdir -p android
+          mkdir -p android/app
+          mkdir -p android/app/src/main
           mkdir -p android/app/src/main/java/com/ethusd/patternlab
-          mkdir -p android/app/src/main/res/values
           mkdir -p android/app/src/main/res/drawable
-
-          cat > android/settings.gradle <<'EOF'
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.name = "EthusdPatternLab"
-          include ':app'
-          EOF
-
-          cat > android/build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application' version '8.2.2' apply false
-              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
-          }
-          EOF
-
-          cat > android/gradle.properties <<'EOF'
-          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-          android.useAndroidX=true
-          android.nonTransitiveRClass=true
-          kotlin.code.style=official
-          EOF
+          mkdir -p android/app/src/main/res/values
 
           cat > android/app/build.gradle <<'EOF'
           plugins {
@@ -106,8 +76,8 @@ jobs:
                   applicationId 'com.ethusd.patternlab'
                   minSdk 24
                   targetSdk 34
-                  versionCode 4
-                  versionName '0.4.0'
+                  versionCode 6
+                  versionName '0.6.0'
 
                   buildConfigField "String", "SYMBOL",
                       "\"${project.findProperty('symbol') ?: 'ETHUSD'}\""
@@ -129,12 +99,51 @@ jobs:
           }
           EOF
 
+          cat > android/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.2.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+          }
+          EOF
+
+          cat > android/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          kotlin.code.style=official
+          EOF
+
+          cat > android/settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "EthusdPatternLab"
+          include ':app'
+          EOF
+
           cat > android/app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+              <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
               <application
                   android:allowBackup="true"
@@ -147,6 +156,7 @@ jobs:
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
+                      android:launchMode="singleTop"
                       android:windowSoftInputMode="adjustResize"
                       android:configChanges="orientation|screenSize|keyboardHidden|screenLayout">
                       <intent-filter>
@@ -154,8 +164,51 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
+
+                  <service
+                      android:name=".MonitorService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="live market pattern monitoring" />
+                  </service>
+
+                  <receiver
+                      android:name=".BootReceiver"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.BOOT_COMPLETED" />
+                      </intent-filter>
+                  </receiver>
               </application>
           </manifest>
+          EOF
+
+          cat > android/app/src/main/res/drawable/ic_launcher.xml <<'EOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#0B1B2B"
+                    android:pathData="M0,0h108v108h-108z" />
+              <path android:fillColor="#4CAF50"
+                    android:pathData="M16,84 L32,58 L44,70 L58,36 L70,52 L92,20 L92,84 Z" />
+              <path android:fillColor="#FFC107"
+                    android:pathData="M70,52 L92,20 L92,32 L70,60 Z" />
+          </vector>
+          EOF
+
+          cat > android/app/src/main/res/drawable/ic_stat.xml <<'EOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path android:fillColor="#FFFFFFFF"
+                    android:pathData="M3,18 L8,11 L12,15 L17,6 L21,10 L21,12 L17,9 L12,18 L8,14 L4,19 Z" />
+          </vector>
           EOF
 
           cat > android/app/src/main/res/values/strings.xml <<'EOF'
@@ -176,19 +229,250 @@ jobs:
           </resources>
           EOF
 
-          cat > android/app/src/main/res/drawable/ic_launcher.xml <<'EOF'
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="108dp"
-              android:height="108dp"
-              android:viewportWidth="108"
-              android:viewportHeight="108">
-              <path android:fillColor="#0B1B2B"
-                    android:pathData="M0,0h108v108h-108z" />
-              <path android:fillColor="#4CAF50"
-                    android:pathData="M16,84 L32,58 L44,70 L58,36 L70,52 L92,20 L92,84 Z" />
-              <path android:fillColor="#FFC107"
-                    android:pathData="M70,52 L92,20 L92,32 L70,60 Z" />
-          </vector>
+          cat > android/app/src/main/java/com/ethusd/patternlab/Cfg.kt <<'EOF'
+          package com.ethusd.patternlab
+
+          import android.content.Context
+
+          object Cfg {
+              val tfNames = listOf("1m", "5m", "15m", "1h", "4h")
+              val tfSecs = longArrayOf(60L, 300L, 900L, 3600L, 14400L)
+              val corrNames = listOf("90%", "95%", "97%", "99%")
+              val corrValues = doubleArrayOf(0.90, 0.95, 0.97, 0.99)
+              val topValues = intArrayOf(3, 5, 8)
+              val symbols = listOf("BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD")
+
+              fun human(sec: Long): String {
+                  val d = sec / 86400
+                  val hh = (sec % 86400) / 3600
+                  val m = (sec % 3600) / 60
+                  val sb = StringBuilder()
+                  if (d > 0) sb.append(d).append("d ")
+                  if (hh > 0) sb.append(hh).append("h ")
+                  if (m > 0 || sb.isEmpty()) sb.append(m).append("m ")
+                  return sb.toString().trim()
+              }
+          }
+
+          class AppSettings(
+              val symbol: String,
+              val tfIdx: Int,
+              val win: Int,
+              val hor: Int,
+              val days: Int,
+              val corrIdx: Int,
+              val topIdx: Int,
+              val volFilter: Boolean,
+              val notifyBias: Boolean,
+              val monitor: Boolean
+          ) {
+              fun key(): String = symbol + "|" + tfIdx + "|" + days
+
+              fun sameSearch(o: AppSettings): Boolean =
+                  symbol == o.symbol && tfIdx == o.tfIdx && win == o.win && hor == o.hor &&
+                      days == o.days && corrIdx == o.corrIdx && topIdx == o.topIdx && volFilter == o.volFilter
+
+              fun withFlags(notify: Boolean, mon: Boolean): AppSettings =
+                  AppSettings(symbol, tfIdx, win, hor, days, corrIdx, topIdx, volFilter, notify, mon)
+          }
+
+          object Prefs {
+              private const val FILE = "patternlab_settings"
+
+              fun defaults(): AppSettings = AppSettings(BuildConfig.SYMBOL, 1, 48, 24, 365, 1, 1, true, true, true)
+
+              fun load(ctx: Context): AppSettings {
+                  val p = ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+                  val d = defaults()
+                  return AppSettings(
+                      p.getString("symbol", d.symbol) ?: d.symbol,
+                      p.getInt("tf", d.tfIdx).coerceIn(0, Cfg.tfNames.size - 1),
+                      p.getInt("win", d.win).coerceIn(3, 1000),
+                      p.getInt("hor", d.hor).coerceIn(1, 1000),
+                      p.getInt("days", d.days).coerceIn(1, 1500),
+                      p.getInt("corr", d.corrIdx).coerceIn(0, Cfg.corrValues.size - 1),
+                      p.getInt("top", d.topIdx).coerceIn(0, Cfg.topValues.size - 1),
+                      p.getBoolean("vol", d.volFilter),
+                      p.getBoolean("notify", d.notifyBias),
+                      p.getBoolean("monitor", d.monitor)
+                  )
+              }
+
+              fun save(ctx: Context, s: AppSettings) {
+                  ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+                      .putString("symbol", s.symbol)
+                      .putInt("tf", s.tfIdx)
+                      .putInt("win", s.win)
+                      .putInt("hor", s.hor)
+                      .putInt("days", s.days)
+                      .putInt("corr", s.corrIdx)
+                      .putInt("top", s.topIdx)
+                      .putBoolean("vol", s.volFilter)
+                      .putBoolean("notify", s.notifyBias)
+                      .putBoolean("monitor", s.monitor)
+                      .apply()
+              }
+          }
+          EOF
+
+          cat > android/app/src/main/java/com/ethusd/patternlab/ChartView.kt <<'EOF'
+          package com.ethusd.patternlab
+
+          import android.content.Context
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.DashPathEffect
+          import android.graphics.Paint
+          import android.graphics.Path
+          import android.view.View
+          import java.util.Locale
+
+          class Series(val values: List<Double>, val color: Int, val width: Float = 4f, val offset: Int = 0)
+
+          class ChartView(context: Context) : View(context) {
+
+              private var series: List<Series> = emptyList()
+              private var total = 0
+              private var mark = -1
+              private var showLabels = true
+
+              private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                  style = Paint.Style.STROKE
+                  strokeJoin = Paint.Join.ROUND
+                  strokeCap = Paint.Cap.ROUND
+              }
+              private val gridPaint = Paint().apply {
+                  color = Color.parseColor("#22FFFFFF")
+                  strokeWidth = 1f
+              }
+              private val markPaint = Paint().apply {
+                  color = Color.parseColor("#88FFFFFF")
+                  strokeWidth = 2f
+                  style = Paint.Style.STROKE
+                  pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
+              }
+              private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                  color = Color.parseColor("#99FFFFFF")
+                  textSize = 26f
+              }
+
+              fun setSeries(s: List<Series>, totalPoints: Int, markIndex: Int = -1, labels: Boolean = true) {
+                  series = s
+                  total = totalPoints
+                  mark = markIndex
+                  showLabels = labels
+                  invalidate()
+              }
+
+              override fun onDraw(canvas: Canvas) {
+                  super.onDraw(canvas)
+                  if (series.isEmpty() || total < 2) return
+
+                  var mn = Double.MAX_VALUE
+                  var mx = -Double.MAX_VALUE
+                  for (s in series) {
+                      for (v in s.values) {
+                          if (v < mn) mn = v
+                          if (v > mx) mx = v
+                      }
+                  }
+                  if (mn > mx) return
+                  val range = if (mx - mn < 1e-9) 1.0 else mx - mn
+
+                  val w = width.toFloat()
+                  val h = height.toFloat()
+                  val padTop = if (showLabels) 34f else 12f
+                  val padBottom = if (showLabels) 34f else 12f
+                  val usable = h - padTop - padBottom
+
+                  for (i in 0..3) {
+                      val y = padTop + usable * i / 3f
+                      canvas.drawLine(0f, y, w, y, gridPaint)
+                  }
+
+                  if (mark in 0 until total) {
+                      val mxp = w * mark / (total - 1).toFloat()
+                      val mp = Path()
+                      mp.moveTo(mxp, padTop)
+                      mp.lineTo(mxp, h - padBottom)
+                      canvas.drawPath(mp, markPaint)
+                  }
+
+                  for (s in series) {
+                      if (s.values.size < 2) continue
+                      val path = Path()
+                      s.values.forEachIndexed { i, v ->
+                          val x = w * (i + s.offset) / (total - 1).toFloat()
+                          val y = padTop + usable * (1f - ((v - mn) / range).toFloat())
+                          if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                      }
+                      linePaint.color = s.color
+                      linePaint.strokeWidth = s.width
+                      canvas.drawPath(path, linePaint)
+                  }
+
+                  if (showLabels) {
+                      canvas.drawText(String.format(Locale.US, "%.2f", mx), 8f, padTop - 8f, labelPaint)
+                      canvas.drawText(String.format(Locale.US, "%.2f", mn), 8f, h - 8f, labelPaint)
+                  }
+              }
+          }
+
+          class HistView(context: Context) : View(context) {
+
+              private var counts = IntArray(0)
+              private var lo = 0.0
+              private var hi = 0.0
+
+              private val bar = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val axis = Paint().apply {
+                  color = Color.parseColor("#66FFFFFF")
+                  strokeWidth = 2f
+              }
+              private val txt = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                  color = Color.parseColor("#99FFFFFF")
+                  textSize = 26f
+              }
+
+              fun setData(c: IntArray, low: Double, high: Double) {
+                  counts = c
+                  lo = low
+                  hi = high
+                  invalidate()
+              }
+
+              override fun onDraw(canvas: Canvas) {
+                  super.onDraw(canvas)
+                  val n = counts.size
+                  if (n == 0) return
+                  var mx = 1
+                  for (v in counts) if (v > mx) mx = v
+
+                  val w = width.toFloat()
+                  val h = height.toFloat()
+                  val top = 30f
+                  val bottom = h - 34f
+                  val bw = w / n
+
+                  for (i in 0 until n) {
+                      val center = lo + (hi - lo) * (i + 0.5) / n
+                      bar.color = Color.parseColor(if (center >= 0) "#4CAF50" else "#F44336")
+                      val bh = (bottom - top) * counts[i] / mx.toFloat()
+                      canvas.drawRect(i * bw + 2f, bottom - bh, (i + 1) * bw - 2f, bottom, bar)
+                  }
+                  canvas.drawLine(0f, bottom, w, bottom, axis)
+
+                  if (lo < 0 && hi > 0) {
+                      val x = w * ((0 - lo) / (hi - lo)).toFloat()
+                      canvas.drawLine(x, top, x, bottom, axis)
+                  }
+
+                  canvas.drawText(String.format(Locale.US, "%+.2f%%", lo), 4f, h - 6f, txt)
+                  val s = String.format(Locale.US, "%+.2f%%", hi)
+                  canvas.drawText(s, w - txt.measureText(s) - 4f, h - 6f, txt)
+                  canvas.drawText("most common bin: " + mx, 4f, 24f, txt)
+              }
+          }
           EOF
 
           cat > android/app/src/main/java/com/ethusd/patternlab/DataStore.kt <<'EOF'
@@ -350,19 +634,21 @@ jobs:
                   }
               }
 
-              fun sync( ctx: Context, sym: String, res: String, tfSec: Long, days: Int, progress: (Int, Int) -> Unit ): Candles {
+              fun sync( ctx: Context, sym: String, res: String, tfSec: Long, days: Int, known: Candles?, progress: (Int, Int) -> Unit ): Candles {
                   val now = System.currentTimeMillis() / 1000
                   var need = now - days * 86400L
                   val capStart = now - MAX_BARS * tfSec
                   val capped = need < capStart
                   if (capped) need = capStart
 
-                  val cache = load(ctx, sym, res)
+                  val cache = known ?: load(ctx, sym, res)
                   val parts = ArrayList<Pair<LongArray, DoubleArray>>()
                   var covered = need
+                  var changed = false
 
                   if (cache == null || cache.times.isEmpty()) {
                       parts.add(fetchRange(sym, res, tfSec, need, now, progress))
+                      changed = true
                   } else {
                       val first = cache.times[0]
                       val last = cache.times[cache.times.size - 1]
@@ -370,10 +656,12 @@ jobs:
                       if (need < cache.coveredFrom - tfSec) {
                           parts.add(fetchRange(sym, res, tfSec, need, first, progress))
                           covered = need
+                          changed = true
                       }
                       parts.add(Pair(cache.times, cache.closes))
                       if (now - last >= 2 * tfSec) {
                           parts.add(fetchRange(sym, res, tfSec, last, now, progress))
+                          changed = true
                       }
                   }
 
@@ -382,342 +670,244 @@ jobs:
                   while (n > 0 && merged.first[n - 1] + tfSec > now) n--
                   val t = merged.first.copyOf(n)
                   val c = merged.second.copyOf(n)
-                  save(ctx, sym, res, covered, t, c)
+                  if (changed) save(ctx, sym, res, covered, t, c)
 
                   var from = 0
                   while (from < n && t[from] < need) from++
-                  return Candles(t.copyOfRange(from, n), c.copyOfRange(from, n), covered, capped)
+                  val cov = if (from > 0) need else covered
+                  return Candles(t.copyOfRange(from, n), c.copyOfRange(from, n), cov, capped)
               }
           }
           EOF
 
-          cat > android/app/src/main/java/com/ethusd/patternlab/PatternEngine.kt <<'EOF'
-          package com.ethusd.patternlab
-
-          import kotlin.math.abs
-          import kotlin.math.max
-          import kotlin.math.min
-          import kotlin.math.sqrt
-
-          class Match(
-              val start: Int,
-              val timeSec: Long,
-              val corr: Double,
-              val fwdPct: Double,
-              val peakPct: Double,
-              val dipPct: Double,
-              val path: List<Double>
-          )
-
-          class Result(
-              val current: List<Double>,
-              val top: List<Match>,
-              val count: Int,
-              val upPct: Double,
-              val downPct: Double,
-              val avg: Double,
-              val median: Double,
-              val best: Double,
-              val worst: Double,
-              val avgPeak: Double,
-              val avgDip: Double,
-              val bins: IntArray,
-              val binLo: Double,
-              val binHi: Double
-          ) {
-              companion object {
-                  fun empty(current: List<Double> = emptyList()): Result =
-                      Result(current, emptyList(), 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, IntArray(0), 0.0, 0.0)
-              }
-          }
-
-          object PatternEngine {
-
-              fun find( closes: DoubleArray, times: LongArray, w: Int, h: Int, minCorr: Double, volFilter: Boolean, topK: Int ): Result {
-                  val n = closes.size
-                  val lastStart = min(n - w - h, n - 2 * w)
-                  if (n < 10 || lastStart < 0) return Result.empty()
-
-                  val base = closes[n / 2]
-                  val y = DoubleArray(n) { closes[it] - base }
-                  val p1 = DoubleArray(n + 1)
-                  val p2 = DoubleArray(n + 1)
-                  for (i in 0 until n) {
-                      p1[i + 1] = p1[i] + y[i]
-                      p2[i + 1] = p2[i] + y[i] * y[i]
-                  }
-
-                  var cm = 0.0
-                  for (j in 0 until w) cm += y[n - w + j]
-                  cm /= w
-                  var cv = 0.0
-                  for (j in 0 until w) {
-                      val d = y[n - w + j] - cm
-                      cv += d * d
-                  }
-                  val cstd = sqrt(cv / w)
-                  if (cstd < 1e-9) return Result.empty()
-                  val cz = DoubleArray(w) { (y[n - w + it] - cm) / cstd }
-                  val curRel = cstd / max(abs(cm + base), 1e-9)
-
-                  val idx = ArrayList<Int>()
-                  val cor = ArrayList<Double>()
-                  for (s in 0..lastStart) {
-                      val sum1 = p1[s + w] - p1[s]
-                      val sum2 = p2[s + w] - p2[s]
-                      val mean = sum1 / w
-                      val v = sum2 / w - mean * mean
-                      if (v <= 1e-12) continue
-                      val std = sqrt(v)
-                      if (volFilter) {
-                          val rel = std / max(abs(mean + base), 1e-9)
-                          val ratio = rel / max(curRel, 1e-12)
-                          if (ratio < 0.5 || ratio > 2.0) continue
-                      }
-                      var dot = 0.0
-                      for (j in 0 until w) dot += cz[j] * y[s + j]
-                      val c = dot / (w * std)
-                      if (c >= minCorr) {
-                          idx.add(s)
-                          cor.add(c)
-                      }
-                  }
-                  val curList = cz.toList()
-                  if (idx.isEmpty()) return Result.empty(curList)
-
-                  val order = idx.indices.sortedByDescending { cor[it] }
-                  val blocked = BooleanArray(n)
-                  val picked = ArrayList<Int>()
-                  for (k in order) {
-                      val s = idx[k]
-                      if (blocked[s]) continue
-                      picked.add(k)
-                      val a = max(0, s - w + 1)
-                      val b = min(n - 1, s + w - 1)
-                      for (q in a..b) blocked[q] = true
-                      if (picked.size >= 5000) break
-                  }
-
-                  val m = picked.size
-                  val fwd = DoubleArray(m)
-                  val peak = DoubleArray(m)
-                  val dip = DoubleArray(m)
-                  var up = 0
-                  var down = 0
-                  for (i in 0 until m) {
-                      val s = idx[picked[i]]
-                      val b = closes[s + w - 1]
-                      var pk = 0.0
-                      var dp = 0.0
-                      for (j in 1..h) {
-                          val pc = (closes[s + w - 1 + j] / b - 1.0) * 100.0
-                          if (pc > pk) pk = pc
-                          if (pc < dp) dp = pc
-                      }
-                      val f = (closes[s + w - 1 + h] / b - 1.0) * 100.0
-                      fwd[i] = f
-                      peak[i] = pk
-                      dip[i] = dp
-                      if (f > 0) up++
-                      if (f < 0) down++
-                  }
-
-                  val sorted = fwd.sortedArray()
-                  val median = if (m % 2 == 1) sorted[m / 2] else (sorted[m / 2 - 1] + sorted[m / 2]) / 2.0
-                  val lo = sorted[0]
-                  var hi = sorted[m - 1]
-                  if (hi - lo < 1e-9) hi = lo + 1e-6
-                  val nb = 15
-                  val bins = IntArray(nb)
-                  for (v in fwd) {
-                      val bi = ((v - lo) / (hi - lo) * nb).toInt().coerceIn(0, nb - 1)
-                      bins[bi]++
-                  }
-
-                  val top = ArrayList<Match>()
-                  for (i in 0 until min(topK, m)) {
-                      val k = picked[i]
-                      val s = idx[k]
-                      var mean = 0.0
-                      for (j in 0 until w) mean += closes[s + j]
-                      mean /= w
-                      var vv = 0.0
-                      for (j in 0 until w) {
-                          val d = closes[s + j] - mean
-                          vv += d * d
-                      }
-                      val std = max(sqrt(vv / w), 1e-9)
-                      val path = (0 until w + h).map { (closes[s + it] - mean) / std }
-                      top.add(Match(s, times[s + w - 1], cor[k], fwd[i], peak[i], dip[i], path))
-                  }
-
-                  return Result(
-                      curList, top, m,
-                      up * 100.0 / m, down * 100.0 / m,
-                      fwd.average(), median, sorted[m - 1], sorted[0],
-                      peak.average(), dip.average(),
-                      bins, lo, hi
-                  )
-              }
-          }
-          EOF
-
-          cat > android/app/src/main/java/com/ethusd/patternlab/ChartView.kt <<'EOF'
+          cat > android/app/src/main/java/com/ethusd/patternlab/LiveEngine.kt <<'EOF'
           package com.ethusd.patternlab
 
           import android.content.Context
-          import android.graphics.Canvas
-          import android.graphics.Color
-          import android.graphics.DashPathEffect
-          import android.graphics.Paint
-          import android.graphics.Path
-          import android.view.View
-          import java.util.Locale
+          import java.util.concurrent.CopyOnWriteArrayList
+          import java.util.concurrent.locks.LockSupport
+          import kotlin.math.max
 
-          class Series(val values: List<Double>, val color: Int, val width: Float = 4f)
+          class Ticker(
+              val last: Double,
+              val open: Double,
+              val high: Double,
+              val low: Double,
+              val mark: Double,
+              val volume: Double,
+              val funding: Double,
+              val oi: Double
+          )
 
-          class ChartView(context: Context) : View(context) {
+          class Snapshot(
+              val settings: AppSettings,
+              val result: Result,
+              val cur: DoubleArray,
+              val first: Long,
+              val lastBar: Long,
+              val bars: Int,
+              val capped: Boolean,
+              val price: Double,
+              val relaxed: Boolean,
+              val secs: Double,
+              val stampMs: Long
+          )
 
-              private var series: List<Series> = emptyList()
-              private var total = 0
-              private var mark = -1
-              private var showLabels = true
+          object LiveEngine {
 
-              private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                  style = Paint.Style.STROKE
-                  strokeJoin = Paint.Join.ROUND
-                  strokeCap = Paint.Cap.ROUND
+              @Volatile var snapshot: Snapshot? = null
+              @Volatile var ticker: Ticker? = null
+              @Volatile var status: String = "Starting..."
+              @Volatile var progress: Int = -1
+              @Volatile var uiVisible: Boolean = false
+
+              private val listeners = CopyOnWriteArrayList<() -> Unit>()
+              @Volatile private var cfg: AppSettings? = null
+              @Volatile private var dirty = true
+              @Volatile private var running = false
+              @Volatile private var gen = 0
+              private var worker: Thread? = null
+
+              fun addListener(l: () -> Unit) {
+                  if (!listeners.contains(l)) listeners.add(l)
               }
-              private val gridPaint = Paint().apply {
-                  color = Color.parseColor("#22FFFFFF")
-                  strokeWidth = 1f
-              }
-              private val markPaint = Paint().apply {
-                  color = Color.parseColor("#88FFFFFF")
-                  strokeWidth = 2f
-                  style = Paint.Style.STROKE
-                  pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
-              }
-              private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                  color = Color.parseColor("#99FFFFFF")
-                  textSize = 26f
+
+              fun removeListener(l: () -> Unit) {
+                  listeners.remove(l)
               }
 
-              fun setSeries(s: List<Series>, totalPoints: Int, markIndex: Int = -1, labels: Boolean = true) {
-                  series = s
-                  total = totalPoints
-                  mark = markIndex
-                  showLabels = labels
-                  invalidate()
-              }
-
-              override fun onDraw(canvas: Canvas) {
-                  super.onDraw(canvas)
-                  if (series.isEmpty() || total < 2) return
-
-                  var mn = Double.MAX_VALUE
-                  var mx = -Double.MAX_VALUE
-                  for (s in series) {
-                      for (v in s.values) {
-                          if (v < mn) mn = v
-                          if (v > mx) mx = v
+              private fun fire() {
+                  for (l in listeners) {
+                      try {
+                          l()
+                      } catch (e: Exception) {
                       }
                   }
-                  if (mn > mx) return
-                  val range = if (mx - mn < 1e-9) 1.0 else mx - mn
+              }
 
-                  val w = width.toFloat()
-                  val h = height.toFloat()
-                  val padTop = if (showLabels) 34f else 12f
-                  val padBottom = if (showLabels) 34f else 12f
-                  val usable = h - padTop - padBottom
+              private fun wake() {
+                  val t = worker
+                  if (t != null) LockSupport.unpark(t)
+              }
 
-                  for (i in 0..3) {
-                      val y = padTop + usable * i / 3f
-                      canvas.drawLine(0f, y, w, y, gridPaint)
+              @Synchronized
+              fun start(ctx: Context, s: AppSettings) {
+                  val old = cfg
+                  cfg = s
+                  if (old == null || !old.sameSearch(s)) dirty = true
+                  if (running) {
+                      wake()
+                      return
                   }
+                  running = true
+                  gen++
+                  val myGen = gen
+                  val app = ctx.applicationContext
+                  val t = Thread { loop(app, myGen) }
+                  t.isDaemon = true
+                  worker = t
+                  t.start()
+              }
 
-                  if (mark in 0 until total) {
-                      val mxp = w * mark / (total - 1).toFloat()
-                      val mp = Path()
-                      mp.moveTo(mxp, padTop)
-                      mp.lineTo(mxp, h - padBottom)
-                      canvas.drawPath(mp, markPaint)
+              @Synchronized
+              fun stop() {
+                  running = false
+                  wake()
+              }
+
+              fun forceRun() {
+                  dirty = true
+                  wake()
+              }
+
+              private fun readTicker(sym: String): Ticker {
+                  val root = try {
+                      DataStore.getJson("/v2/tickers/" + sym)
+                  } catch (e: java.io.FileNotFoundException) {
+                      throw RuntimeException("Symbol not found on Delta India: " + sym)
                   }
+                  val t = root.optJSONObject("result")
+                      ?: throw RuntimeException("No data for symbol " + sym + ". Check the symbol name.")
+                  return Ticker(
+                      t.optDouble("close"), t.optDouble("open"), t.optDouble("high"), t.optDouble("low"),
+                      t.optDouble("mark_price"), t.optDouble("volume"), t.optDouble("funding_rate"), t.optDouble("oi")
+                  )
+              }
 
-                  for (s in series) {
-                      if (s.values.size < 2) continue
-                      val path = Path()
-                      s.values.forEachIndexed { i, v ->
-                          val x = w * i / (total - 1).toFloat()
-                          val y = padTop + usable * (1f - ((v - mn) / range).toFloat())
-                          if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+              private fun loop(app: Context, myGen: Int) {
+                  var data: Candles? = null
+                  var dataKey = ""
+                  var lastRunMs = 0L
+                  var lastRunPrice = Double.NaN
+
+                  while (running && myGen == gen) {
+                      val s = cfg ?: break
+                      val force = dirty
+                      if (force) dirty = false
+                      try {
+                          val tfSec = Cfg.tfSecs[s.tfIdx]
+                          val res = Cfg.tfNames[s.tfIdx]
+
+                          // 1. live price (every loop, about every 2 seconds)
+                          val t = readTicker(s.symbol)
+                          ticker = t
+                          val live = if (!t.last.isNaN() && t.last > 0.0) t.last else t.mark
+                          fire()
+
+                          // 2. history: download once, keep on phone, then only fetch new bars
+                          val key = s.key()
+                          val nowSec = System.currentTimeMillis() / 1000
+                          val d0 = data
+                          val keyChanged = d0 == null || key != dataKey
+                          var newData = false
+                          if (keyChanged || nowSec - d0!!.times[d0.times.size - 1] >= 2 * tfSec) {
+                              if (keyChanged) {
+                                  progress = 0
+                                  status = "Step 1/3 路 Loading history (saved on phone after first download)..."
+                                  fire()
+                              }
+                              val known = if (keyChanged) null else d0
+                              val c = DataStore.sync(app, s.symbol, res, tfSec, s.days, known) { done, total ->
+                                  if (keyChanged) {
+                                      progress = done * 60 / max(total, 1)
+                                      status = "Step 1/3 路 Downloading history: request " + done + " of " + total
+                                      fire()
+                                  }
+                              }
+                              if (c.closes.size < 10) throw RuntimeException("No candles returned for " + res + " " + s.symbol)
+                              data = c
+                              dataKey = key
+                              newData = true
+                          }
+                          val dd = data ?: throw RuntimeException("No data")
+
+                          // 3. matching on the in-memory data + the live (forming) candle
+                          val nowMs = System.currentTimeMillis()
+                          val moved = lastRunPrice.isNaN() || live != lastRunPrice
+                          if (force || newData || (moved && nowMs - lastRunMs >= 5000L)) {
+                              val n = dd.closes.size
+                              if (n < s.win * 3 + s.hor) {
+                                  throw RuntimeException(
+                                      "Only " + n + " candles available. Use more history days or a shorter pattern / look-ahead."
+                                  )
+                              }
+                              val barStart = (nowSec / tfSec) * tfSec
+                              val cl = DoubleArray(n + 1)
+                              System.arraycopy(dd.closes, 0, cl, 0, n)
+                              cl[n] = live
+                              val tm = LongArray(n + 1)
+                              System.arraycopy(dd.times, 0, tm, 0, n)
+                              tm[n] = barStart
+
+                              val showProg = force || keyChanged
+                              val mc = Cfg.corrValues[s.corrIdx]
+                              val topN = Cfg.topValues[s.topIdx]
+                              val t0 = System.currentTimeMillis()
+                              if (showProg) {
+                                  progress = 60
+                                  status = "Step 2/3 路 Sliding the pattern across all history..."
+                                  fire()
+                              }
+                              var r = PatternEngine.find(cl, tm, s.win, s.hor, mc, s.volFilter, topN) { p ->
+                                  if (showProg) {
+                                      progress = 60 + p * 35 / 100
+                                      status = "Step 2/3 路 Scanning history: " + p + "%"
+                                      fire()
+                                  }
+                              }
+                              var relaxed = false
+                              if (r.count == 0 && s.volFilter) {
+                                  relaxed = true
+                                  r = PatternEngine.find(cl, tm, s.win, s.hor, mc, false, topN) { p ->
+                                      if (showProg) {
+                                          progress = 60 + p * 35 / 100
+                                          status = "Step 2/3 路 Re-scanning without volatility filter: " + p + "%"
+                                          fire()
+                                      }
+                                  }
+                              }
+                              val secs = (System.currentTimeMillis() - t0) / 1000.0
+                              val cur = cl.copyOfRange(cl.size - s.win, cl.size)
+                              snapshot = Snapshot(
+                                  s, r, cur, dd.times[0], dd.times[dd.times.size - 1], n, dd.capped,
+                                  live, relaxed, secs, System.currentTimeMillis()
+                              )
+                              progress = -1
+                              status = "Live"
+                              lastRunMs = System.currentTimeMillis()
+                              lastRunPrice = live
+                              fire()
+                          }
+                      } catch (e: Throwable) {
+                          if (force) dirty = true
+                          progress = -1
+                          status = "Error: " + (e.message ?: e.javaClass.simpleName) + " (retrying)"
+                          fire()
+                          LockSupport.parkNanos(6_000_000_000L)
+                          continue
                       }
-                      linePaint.color = s.color
-                      linePaint.strokeWidth = s.width
-                      canvas.drawPath(path, linePaint)
+                      if (!dirty) LockSupport.parkNanos(2_000_000_000L)
                   }
-
-                  if (showLabels) {
-                      canvas.drawText(String.format(Locale.US, "%.2f", mx), 8f, padTop - 8f, labelPaint)
-                      canvas.drawText(String.format(Locale.US, "%.2f", mn), 8f, h - 8f, labelPaint)
-                  }
-              }
-          }
-
-          class HistView(context: Context) : View(context) {
-
-              private var counts = IntArray(0)
-              private var lo = 0.0
-              private var hi = 0.0
-
-              private val bar = Paint(Paint.ANTI_ALIAS_FLAG)
-              private val axis = Paint().apply {
-                  color = Color.parseColor("#66FFFFFF")
-                  strokeWidth = 2f
-              }
-              private val txt = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                  color = Color.parseColor("#99FFFFFF")
-                  textSize = 26f
-              }
-
-              fun setData(c: IntArray, low: Double, high: Double) {
-                  counts = c
-                  lo = low
-                  hi = high
-                  invalidate()
-              }
-
-              override fun onDraw(canvas: Canvas) {
-                  super.onDraw(canvas)
-                  val n = counts.size
-                  if (n == 0) return
-                  var mx = 1
-                  for (v in counts) if (v > mx) mx = v
-
-                  val w = width.toFloat()
-                  val h = height.toFloat()
-                  val top = 30f
-                  val bottom = h - 34f
-                  val bw = w / n
-
-                  for (i in 0 until n) {
-                      val center = lo + (hi - lo) * (i + 0.5) / n
-                      bar.color = Color.parseColor(if (center >= 0) "#4CAF50" else "#F44336")
-                      val bh = (bottom - top) * counts[i] / mx.toFloat()
-                      canvas.drawRect(i * bw + 2f, bottom - bh, (i + 1) * bw - 2f, bottom, bar)
-                  }
-                  canvas.drawLine(0f, bottom, w, bottom, axis)
-
-                  if (lo < 0 && hi > 0) {
-                      val x = w * ((0 - lo) / (hi - lo)).toFloat()
-                      canvas.drawLine(x, top, x, bottom, axis)
-                  }
-
-                  canvas.drawText(String.format(Locale.US, "%+.2f%%", lo), 4f, h - 6f, txt)
-                  val s = String.format(Locale.US, "%+.2f%%", hi)
-                  canvas.drawText(s, w - txt.measureText(s) - 4f, h - 6f, txt)
-                  canvas.drawText("most common bin: " + mx, 4f, 24f, txt)
               }
           }
           EOF
@@ -725,72 +915,79 @@ jobs:
           cat > android/app/src/main/java/com/ethusd/patternlab/MainActivity.kt <<'EOF'
           package com.ethusd.patternlab
 
+          import android.Manifest
           import android.app.Activity
+          import android.content.Intent
+          import android.content.pm.PackageManager
           import android.graphics.Color
           import android.graphics.Typeface
+          import android.net.Uri
+          import android.os.Build
           import android.os.Bundle
-          import android.os.Handler
-          import android.os.Looper
+          import android.provider.Settings
           import android.text.InputType
+          import android.text.SpannableStringBuilder
+          import android.text.Spanned
+          import android.text.style.ForegroundColorSpan
+          import android.view.View
           import android.view.ViewGroup
           import android.widget.Button
           import android.widget.EditText
           import android.widget.LinearLayout
+          import android.widget.ProgressBar
           import android.widget.ScrollView
           import android.widget.TextView
-          import org.json.JSONObject
           import java.text.SimpleDateFormat
           import java.util.Date
           import java.util.Locale
-          import java.util.concurrent.atomic.AtomicBoolean
-          import kotlin.concurrent.thread
 
           class MainActivity : Activity() {
 
-              private val ui = Handler(Looper.getMainLooper())
-              private var running = false
-              private var cycle = 0
-              private val busy = AtomicBoolean(false)
-
-              private val tfNames = listOf("1m", "5m", "15m", "1h", "4h")
-              private val tfSecs = longArrayOf(60L, 300L, 900L, 3600L, 14400L)
-              private val corrNames = listOf("80%", "85%", "90%", "95%")
-              private val corrValues = doubleArrayOf(0.80, 0.85, 0.90, 0.95)
-              private var tfIdx = 1
-              private var corrIdx = 2
-              private var volFilter = true
-
-              private val palette = listOf("#FFC107", "#26C6DA", "#AB47BC", "#FF7043", "#9CCC65")
+              private val palette = listOf(
+                  "#26C6DA", "#AB47BC", "#FF7043", "#9CCC65",
+                  "#EC407A", "#FFCA28", "#42A5F5", "#8D6E63"
+              )
               private val ON = "#2E7D32"
               private val OFF = "#22FFFFFF"
+              private val GREEN = Color.parseColor("#4CAF50")
+              private val RED = Color.parseColor("#F44336")
 
+              private var tfIdx = 1
+              private var corrIdx = 1
+              private var topIdx = 1
+              private var volFilter = true
+              private var notifyBias = true
+              private var monitor = true
+              private var lastRendered: Snapshot? = null
+
+              private lateinit var scroll: ScrollView
+              private lateinit var tvSymbol: TextView
               private lateinit var tvPrice: TextView
               private lateinit var tvChange: TextView
               private lateinit var tvStats: TextView
+              private lateinit var tvLive: TextView
               private lateinit var tvStatus: TextView
               private lateinit var tvCoverage: TextView
               private lateinit var tvSummary: TextView
+              private lateinit var tvProjTitle: TextView
               private lateinit var tvHistTitle: TextView
               private lateinit var priceChart: ChartView
               private lateinit var matchChart: ChartView
               private lateinit var histView: HistView
               private lateinit var rows: LinearLayout
+              private lateinit var etSym: EditText
               private lateinit var etWin: EditText
               private lateinit var etHor: EditText
               private lateinit var etDays: EditText
+              private lateinit var notifyChip: TextView
+              private lateinit var monitorChip: TextView
               private lateinit var volChip: TextView
+              private lateinit var progressBar: ProgressBar
               private val tfChips = ArrayList<TextView>()
               private val corrChips = ArrayList<TextView>()
+              private val topChips = ArrayList<TextView>()
 
-              private val tick = object : Runnable {
-                  override fun run() {
-                      if (!running) return
-                      refreshTicker()
-                      if (cycle % 6 == 0) autoRun()
-                      cycle++
-                      ui.postDelayed(this, 10_000)
-                  }
-              }
+              private val listener: () -> Unit = { runOnUiThread { refreshUi() } }
 
               private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -818,16 +1015,21 @@ jobs:
                           ViewGroup.LayoutParams.WRAP_CONTENT
                       )
                       lp.rightMargin = dp(8)
+                      lp.bottomMargin = dp(8)
                       row.addView(v, lp)
                   }
                   return row
               }
 
-              private fun field(value: String): EditText {
+              private fun field(value: String, text: Boolean = false): EditText {
                   val e = EditText(this)
                   e.setText(value)
                   e.setTextColor(Color.WHITE)
-                  e.inputType = InputType.TYPE_CLASS_NUMBER
+                  e.inputType = if (text) {
+                      InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+                  } else {
+                      InputType.TYPE_CLASS_NUMBER
+                  }
                   e.setBackgroundColor(Color.parseColor("#22FFFFFF"))
                   e.setPadding(dp(10), dp(8), dp(10), dp(8))
                   e.textSize = 16f
@@ -846,18 +1048,27 @@ jobs:
               }
 
               private fun styleChips() {
-                  tfChips.forEachIndexed { i, c ->
-                      c.setBackgroundColor(Color.parseColor(if (i == tfIdx) ON else OFF))
-                  }
-                  corrChips.forEachIndexed { i, c ->
-                      c.setBackgroundColor(Color.parseColor(if (i == corrIdx) ON else OFF))
-                  }
+                  tfChips.forEachIndexed { i, c -> c.setBackgroundColor(Color.parseColor(if (i == tfIdx) ON else OFF)) }
+                  corrChips.forEachIndexed { i, c -> c.setBackgroundColor(Color.parseColor(if (i == corrIdx) ON else OFF)) }
+                  topChips.forEachIndexed { i, c -> c.setBackgroundColor(Color.parseColor(if (i == topIdx) ON else OFF)) }
                   volChip.setBackgroundColor(Color.parseColor(if (volFilter) ON else OFF))
                   volChip.text = if (volFilter) "Volatility filter: on" else "Volatility filter: off"
+                  notifyChip.setBackgroundColor(Color.parseColor(if (notifyBias) ON else OFF))
+                  notifyChip.text = if (notifyBias) "Alert on bias change: on" else "Alert on bias change: off"
+                  monitorChip.setBackgroundColor(Color.parseColor(if (monitor) ON else OFF))
+                  monitorChip.text = if (monitor) "Background monitoring: on" else "Background monitoring: off"
               }
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
+
+                  val saved = Prefs.load(this)
+                  tfIdx = saved.tfIdx
+                  corrIdx = saved.corrIdx
+                  topIdx = saved.topIdx
+                  volFilter = saved.volFilter
+                  notifyBias = saved.notifyBias
+                  monitor = saved.monitor
 
                   val root = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
@@ -865,35 +1076,48 @@ jobs:
                       setPadding(dp(16), dp(32), dp(16), dp(32))
                   }
 
-                  val tvSymbol = label(16f, "#99FFFFFF", true)
-                  tvSymbol.text = BuildConfig.SYMBOL + " · Delta Exchange India"
+                  tvSymbol = label(16f, "#99FFFFFF", true)
                   tvPrice = label(40f, "#FFFFFF", true)
                   tvPrice.text = "--"
                   tvChange = label(16f, "#FFFFFF")
                   tvStats = label(13f, "#CCFFFFFF")
                   tvStats.setPadding(0, dp(8), 0, dp(8))
-                  priceChart = ChartView(this)
+
+                  tvLive = label(15f, "#FFFFFF")
+                  tvLive.setBackgroundColor(Color.parseColor("#14293D"))
+                  tvLive.setPadding(dp(14), dp(12), dp(14), dp(12))
+                  tvLive.text = "LIVE signal will appear here"
+
+                  progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
+                  progressBar.max = 100
+                  progressBar.visibility = View.GONE
+                  tvStatus = label(13f, "#FFC107")
+                  tvStatus.setPadding(0, dp(6), 0, dp(6))
 
                   val tvSettings = label(18f, "#FFFFFF", true)
-                  tvSettings.text = "Pattern settings"
+                  tvSettings.text = "Settings (saved automatically)"
                   tvSettings.setPadding(0, dp(24), 0, dp(8))
+
+                  etSym = field(saved.symbol, true)
+                  val symChips = Cfg.symbols.map { name -> chip(name) { etSym.setText(name) } }
+                  for (c in symChips) c.setBackgroundColor(Color.parseColor(OFF))
 
                   val lblTf = label(11f, "#99FFFFFF")
                   lblTf.text = "Timeframe (candle size)"
-                  lblTf.setPadding(0, 0, 0, dp(4))
-                  tfNames.forEachIndexed { i, name ->
+                  lblTf.setPadding(0, dp(8), 0, dp(4))
+                  Cfg.tfNames.forEachIndexed { i, name ->
                       tfChips.add(chip(name) { tfIdx = i; styleChips() })
                   }
 
-                  etWin = field("12")
-                  etHor = field("12")
-                  etDays = field("365")
+                  etWin = field(saved.win.toString())
+                  etHor = field(saved.hor.toString())
+                  etDays = field(saved.days.toString())
                   val fieldsRow = LinearLayout(this)
                   fieldsRow.orientation = LinearLayout.HORIZONTAL
-                  fieldsRow.setPadding(0, dp(12), 0, dp(4))
+                  fieldsRow.setPadding(0, dp(8), 0, dp(4))
                   val cols = listOf(
-                      labeled("Pattern (bars)", etWin),
-                      labeled("Look-ahead (bars)", etHor),
+                      labeled("Matching pattern (bars)", etWin),
+                      labeled("Prediction (bars)", etHor),
                       labeled("History (days)", etDays)
                   )
                   for (col in cols) {
@@ -903,33 +1127,64 @@ jobs:
                   }
 
                   val lblCorr = label(11f, "#99FFFFFF")
-                  lblCorr.text = "Minimum match"
+                  lblCorr.text = "Minimum match (higher = stricter, closer to exact)"
                   lblCorr.setPadding(0, dp(8), 0, dp(4))
-                  corrNames.forEachIndexed { i, name ->
+                  Cfg.corrNames.forEachIndexed { i, name ->
                       corrChips.add(chip(name) { corrIdx = i; styleChips() })
                   }
 
+                  val lblTop = label(11f, "#99FFFFFF")
+                  lblTop.text = "Cases shown as colored lines"
+                  lblTop.setPadding(0, dp(8), 0, dp(4))
+                  Cfg.topValues.forEachIndexed { i, v ->
+                      topChips.add(chip("Top " + v) { topIdx = i; styleChips() })
+                  }
+
                   volChip = chip("Volatility filter: on") { volFilter = !volFilter; styleChips() }
-                  val volRow = rowOf(listOf(volChip))
-                  volRow.setPadding(0, dp(12), 0, dp(12))
+                  notifyChip = chip("Alert on bias change: on") {
+                      notifyBias = !notifyBias
+                      styleChips()
+                      saveFlags()
+                  }
+                  monitorChip = chip("Background monitoring: on") {
+                      monitor = !monitor
+                      styleChips()
+                      saveFlags()
+                      if (monitor) MonitorService.start(this) else MonitorService.stop(this)
+                  }
                   styleChips()
+                  for (c in symChips) c.setBackgroundColor(Color.parseColor(OFF))
 
                   val btnRun = Button(this)
-                  btnRun.text = "Run pattern match"
-                  btnRun.setOnClickListener { startRun() }
+                  btnRun.text = "Apply and run"
+                  btnRun.setOnClickListener { applySettings() }
+
+                  val btnBatt = Button(this)
+                  btnBatt.text = "Allow unrestricted background running"
+                  btnBatt.setOnClickListener { askBattery() }
 
                   tvCoverage = label(12f, "#99FFFFFF")
                   tvCoverage.setPadding(0, dp(12), 0, dp(4))
                   tvSummary = label(14f, "#FFFFFF")
                   tvSummary.setPadding(0, dp(4), 0, dp(8))
-                  tvSummary.text = "Loading history..."
 
+                  tvProjTitle = label(15f, "#FFFFFF", true)
+                  tvProjTitle.setPadding(0, dp(12), 0, dp(4))
+                  priceChart = ChartView(this)
+                  val tvLegend1 = label(11f, "#88FFFFFF")
+                  tvLegend1.text = "Blue = latest pattern (real prices). Colored = past matches placed on the same end price, " +
+                      "then what followed. White thick = average projection of all cases. Dashed = now."
+                  tvLegend1.setPadding(0, dp(4), 0, dp(12))
+
+                  val tvShapeTitle = label(15f, "#FFFFFF", true)
+                  tvShapeTitle.text = "Shape comparison (same colors)"
+                  tvShapeTitle.setPadding(0, dp(8), 0, dp(4))
                   matchChart = ChartView(this)
-                  val tvLegend = label(11f, "#77FFFFFF")
-                  tvLegend.text = "White = latest pattern. Colors = best past matches and what followed. Dashed line = now."
-                  tvLegend.setPadding(0, dp(4), 0, dp(12))
+                  val tvLegend2 = label(11f, "#88FFFFFF")
+                  tvLegend2.text = "White = latest pattern. Each match is shape-normalised the same way as the score."
+                  tvLegend2.setPadding(0, dp(4), 0, dp(12))
 
-                  tvHistTitle = label(14f, "#FFFFFF", true)
+                  tvHistTitle = label(15f, "#FFFFFF", true)
                   tvHistTitle.setPadding(0, dp(8), 0, dp(4))
                   histView = HistView(this)
 
@@ -939,191 +1194,254 @@ jobs:
 
                   val tvNote = label(11f, "#77FFFFFF")
                   tvNote.setPadding(0, dp(12), 0, 0)
-                  tvNote.text = "Similarity = shape correlation. Past matches describe history only; " +
-                      "they are not a prediction or financial advice."
-                  tvStatus = label(12f, "#77FFFFFF")
-                  tvStatus.setPadding(0, dp(8), 0, 0)
-                  tvStatus.text = "Starting..."
+                  tvNote.text = "Similarity = recency-weighted shape distance (latest bars count more). " +
+                      "Past matches describe history only; they are not a prediction or financial advice."
 
                   val mp = ViewGroup.LayoutParams.MATCH_PARENT
                   root.addView(tvSymbol)
                   root.addView(tvPrice)
                   root.addView(tvChange)
                   root.addView(tvStats)
-                  root.addView(priceChart, LinearLayout.LayoutParams(mp, dp(150)))
+                  root.addView(tvLive, LinearLayout.LayoutParams(mp, ViewGroup.LayoutParams.WRAP_CONTENT))
+                  root.addView(progressBar, LinearLayout.LayoutParams(mp, dp(10)))
+                  root.addView(tvStatus)
                   root.addView(tvSettings)
+                  root.addView(labeled("Symbol", etSym))
+                  root.addView(rowOf(symChips))
                   root.addView(lblTf)
                   root.addView(rowOf(tfChips))
                   root.addView(fieldsRow)
                   root.addView(lblCorr)
                   root.addView(rowOf(corrChips))
-                  root.addView(volRow)
+                  root.addView(lblTop)
+                  root.addView(rowOf(topChips))
+                  root.addView(rowOf(listOf(volChip)))
+                  root.addView(rowOf(listOf(notifyChip)))
+                  root.addView(rowOf(listOf(monitorChip)))
                   root.addView(btnRun)
+                  root.addView(btnBatt)
                   root.addView(tvCoverage)
                   root.addView(tvSummary)
-                  root.addView(matchChart, LinearLayout.LayoutParams(mp, dp(210)))
-                  root.addView(tvLegend)
+                  root.addView(tvProjTitle)
+                  root.addView(priceChart, LinearLayout.LayoutParams(mp, dp(250)))
+                  root.addView(tvLegend1)
+                  root.addView(tvShapeTitle)
+                  root.addView(matchChart, LinearLayout.LayoutParams(mp, dp(200)))
+                  root.addView(tvLegend2)
                   root.addView(tvHistTitle)
                   root.addView(histView, LinearLayout.LayoutParams(mp, dp(130)))
                   root.addView(rows)
                   root.addView(tvNote)
-                  root.addView(tvStatus)
 
-                  val scroll = ScrollView(this)
+                  scroll = ScrollView(this)
                   scroll.setBackgroundColor(Color.parseColor("#0B1B2B"))
                   scroll.addView(root)
                   setContentView(scroll)
+
+                  if (Build.VERSION.SDK_INT >= 33 &&
+                      checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                  ) {
+                      requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100)
+                  }
               }
 
               override fun onResume() {
                   super.onResume()
-                  running = true
-                  cycle = 0
-                  ui.post(tick)
+                  LiveEngine.uiVisible = true
+                  LiveEngine.addListener(listener)
+                  val s = Prefs.load(this)
+                  LiveEngine.start(applicationContext, s)
+                  if (s.monitor) MonitorService.start(this)
+                  lastRendered = null
+                  refreshUi()
               }
 
               override fun onPause() {
                   super.onPause()
-                  running = false
-                  ui.removeCallbacks(tick)
+                  LiveEngine.uiVisible = false
+                  LiveEngine.removeListener(listener)
+                  if (!Prefs.load(this).monitor) LiveEngine.stop()
+              }
+
+              private fun saveFlags() {
+                  Prefs.save(this, Prefs.load(this).withFlags(notifyBias, monitor))
+              }
+
+              private fun askBattery() {
+                  try {
+                      val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                      i.data = Uri.parse("package:" + packageName)
+                      startActivity(i)
+                  } catch (e: Exception) {
+                      try {
+                          startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                      } catch (e2: Exception) {
+                      }
+                  }
+              }
+
+              private fun applySettings() {
+                  val sym = etSym.text.toString().trim().uppercase(Locale.US)
+                  val w = etWin.text.toString().trim().toIntOrNull()
+                  val h = etHor.text.toString().trim().toIntOrNull()
+                  val d = etDays.text.toString().trim().toIntOrNull()
+                  if (sym.isEmpty() || w == null || h == null || d == null ||
+                      w < 3 || w > 1000 || h < 1 || h > 1000 || d < 1 || d > 1500
+                  ) {
+                      tvStatus.text = "Check inputs: symbol, pattern 3-1000 bars, prediction 1-1000 bars, history 1-1500 days"
+                      return
+                  }
+                  val s = AppSettings(sym, tfIdx, w, h, d, corrIdx, topIdx, volFilter, notifyBias, monitor)
+                  Prefs.save(this, s)
+                  LiveEngine.start(applicationContext, s)
+                  LiveEngine.forceRun()
+                  if (monitor) MonitorService.start(this) else MonitorService.stop(this)
+                  tvStatus.text = "Settings saved. Running..."
               }
 
               private fun fmt(d: Double): String = String.format(Locale.US, "%,.2f", d)
 
-              private fun human(sec: Long): String {
-                  val d = sec / 86400
-                  val hh = (sec % 86400) / 3600
-                  val m = (sec % 3600) / 60
-                  val sb = StringBuilder()
-                  if (d > 0) sb.append(d).append("d ")
-                  if (hh > 0) sb.append(hh).append("h ")
-                  if (m > 0 || sb.isEmpty()) sb.append(m).append("m ")
-                  return sb.toString().trim()
-              }
+              private fun refreshUi() {
+                  val s = Prefs.load(this)
+                  tvSymbol.text = s.symbol + " 路 Delta Exchange India 路 live"
 
-              private fun refreshTicker() {
-                  thread {
-                      try {
-                          val t = DataStore.getJson("/v2/tickers/" + BuildConfig.SYMBOL).getJSONObject("result")
-                          runOnUiThread { renderTicker(t) }
-                      } catch (e: Exception) {
-                          runOnUiThread { tvStatus.text = "Ticker error: " + (e.message ?: e.javaClass.simpleName) }
-                      }
+                  val t = LiveEngine.ticker
+                  if (t != null) {
+                      tvPrice.text = "$" + fmt(t.last)
+                      val pct = if (t.open > 0) (t.last - t.open) / t.open * 100.0 else 0.0
+                      tvChange.text = String.format(Locale.US, "%+.2f%% (24h)", pct)
+                      tvChange.setTextColor(if (pct >= 0) GREEN else RED)
+                      tvStats.text =
+                          "High " + fmt(t.high) + " Low " + fmt(t.low) + " Mark " + fmt(t.mark) + "\n" +
+                          "Volume " + fmt(t.volume) + " Funding " + String.format(Locale.US, "%.4f", t.funding) +
+                          " OI " + fmt(t.oi)
+                  }
+
+                  val p = LiveEngine.progress
+                  if (p >= 0) {
+                      progressBar.visibility = View.VISIBLE
+                      progressBar.progress = p
+                  } else {
+                      progressBar.visibility = View.GONE
+                  }
+                  tvStatus.text = LiveEngine.status
+
+                  val snap = LiveEngine.snapshot
+                  if (snap == null) return
+                  renderLive(snap)
+                  if (snap !== lastRendered) {
+                      lastRendered = snap
+                      renderSnapshot(snap)
                   }
               }
 
-              private fun renderTicker(t: JSONObject) {
-                  val last = t.optDouble("close")
-                  val open = t.optDouble("open")
-                  val high = t.optDouble("high")
-                  val low = t.optDouble("low")
-                  val mark = t.optDouble("mark_price")
-                  val vol = t.optDouble("volume")
-                  val funding = t.optDouble("funding_rate")
-                  val oi = t.optDouble("oi")
-
-                  tvPrice.text = "$" + fmt(last)
-                  val pct = if (open > 0) (last - open) / open * 100.0 else 0.0
-                  tvChange.text = String.format(Locale.US, "%+.2f%% (24h)", pct)
-                  tvChange.setTextColor(Color.parseColor(if (pct >= 0) "#4CAF50" else "#F44336"))
-                  tvStats.text =
-                      "High " + fmt(high) + " Low " + fmt(low) + " Mark " + fmt(mark) + "\n" +
-                      "Volume " + fmt(vol) + " Funding " + String.format(Locale.US, "%.4f", funding) +
-                      " OI " + fmt(oi)
+              private fun renderLive(snap: Snapshot) {
+                  val s = snap.settings
+                  val r = snap.result
+                  val tfSec = Cfg.tfSecs[s.tfIdx]
+                  val sb = SpannableStringBuilder()
+                  sb.append("LIVE " + s.symbol + " " + Cfg.tfNames[s.tfIdx] + "\n")
+                  sb.append("Matching pattern: " + s.win + " bars (" + Cfg.human(s.win * tfSec) + ")\n")
+                  sb.append("Prediction period: next " + s.hor + " bars (" + Cfg.human(s.hor * tfSec) + ")\n")
+                  if (r.count == 0) {
+                      sb.append("Cases: 0 (no similar patterns found)")
+                  } else {
+                      sb.append("Cases: " + String.format(Locale.US, "%,d", r.count) + " ")
+                      val a = sb.length
+                      sb.append("Positive " + String.format(Locale.US, "%.1f%%", r.upPct))
+                      sb.setSpan(ForegroundColorSpan(GREEN), a, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                      sb.append(" ")
+                      val b = sb.length
+                      sb.append("Negative " + String.format(Locale.US, "%.1f%%", r.downPct))
+                      sb.setSpan(ForegroundColorSpan(RED), b, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                      sb.append("\n" + String.format(Locale.US, "Average %+.2f%% Median %+.2f%%", r.avg, r.median))
+                      if (r.fallback) sb.append("\nNo case reached the minimum match, showing the closest ones")
+                  }
+                  sb.append("\nUpdated " + SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(snap.stampMs)))
+                  tvLive.text = sb
               }
 
-              private fun autoRun() {
-                  if (busy.get()) return
-                  startRun()
-              }
-
-              private fun startRun() {
-                  val w = etWin.text.toString().trim().toIntOrNull()
-                  val h = etHor.text.toString().trim().toIntOrNull()
-                  val d = etDays.text.toString().trim().toIntOrNull()
-                  if (w == null || h == null || d == null || w < 3 || w > 1000 || h < 1 || h > 1000 || d < 1 || d > 1500) {
-                      tvStatus.text = "Check inputs: pattern 3-1000 bars, look-ahead 1-1000 bars, history 1-1500 days"
-                      return
-                  }
-                  runAnalysis(w, h, d)
-              }
-
-              private fun runAnalysis(w: Int, h: Int, d: Int) {
-                  if (!busy.compareAndSet(false, true)) {
-                      tvStatus.text = "Busy, please wait..."
-                      return
-                  }
-                  val res = tfNames[tfIdx]
-                  val sec = tfSecs[tfIdx]
-                  val mc = corrValues[corrIdx]
-                  val vf = volFilter
-                  tvStatus.text = "Loading history..."
-                  thread {
-                      try {
-                          val c = DataStore.sync(applicationContext, BuildConfig.SYMBOL, res, sec, d) { done, total ->
-                              runOnUiThread { tvStatus.text = "Loading history: request " + done + " of " + total }
-                          }
-                          if (c.closes.size < 10) throw RuntimeException("No candles returned for " + res)
-                          runOnUiThread { tvStatus.text = "Matching patterns..." }
-                          val r = PatternEngine.find(c.closes, c.times, w, h, mc, vf, 5)
-                          runOnUiThread { renderAll(r, c, w, h, sec, mc, res) }
-                      } catch (e: Throwable) {
-                          runOnUiThread { tvStatus.text = "Error: " + (e.message ?: e.javaClass.simpleName) }
-                      } finally {
-                          busy.set(false)
-                      }
-                  }
-              }
-
-              private fun renderAll(r: Result, c: Candles, w: Int, h: Int, sec: Long, mc: Double, res: String) {
-                  val n = c.closes.size
-
-                  val recent = c.closes.takeLast(120)
-                  if (recent.size >= 2) {
-                      val up = recent.last() >= recent.first()
-                      val col = Color.parseColor(if (up) "#4CAF50" else "#F44336")
-                      priceChart.setSeries(listOf(Series(recent, col, 4f)), recent.size, -1, true)
-                  }
+              private fun renderSnapshot(snap: Snapshot) {
+                  val s = snap.settings
+                  val r = snap.result
+                  val w = s.win
+                  val h = s.hor
+                  val sec = Cfg.tfSecs[s.tfIdx]
+                  val res = Cfg.tfNames[s.tfIdx]
+                  val p0 = snap.price
+                  val mc = Cfg.corrValues[s.corrIdx]
 
                   val df = SimpleDateFormat("dd MMM yyyy", Locale.US)
-                  val from = df.format(Date(c.times[0] * 1000))
-                  val to = df.format(Date(c.times[n - 1] * 1000))
-                  val cap = if (c.capped) " (capped for this timeframe)" else ""
-                  tvCoverage.text = "History used: " + from + " to " + to + ", " +
-                      String.format(Locale.US, "%,d", n) + " bars of " + res + cap
+                  val cap = if (snap.capped) " (capped for this timeframe)" else ""
+                  tvCoverage.text = "History used: " + df.format(Date(snap.first * 1000)) + " to " +
+                      df.format(Date(snap.lastBar * 1000)) + ", " + String.format(Locale.US, "%,d", snap.bars) +
+                      " bars of " + res + cap + ". Stored on phone; only new bars are downloaded."
 
-                  val patt = "Pattern: last " + w + " bars = " + human(w * sec) + " of " + res
-                  val ahead = "next " + h + " bars (" + human(h * sec) + ")"
+                  val patt = "Pattern: last " + w + " bars = " + Cfg.human(w * sec) + " of " + res
+                  val ahead = "next " + h + " bars (" + Cfg.human(h * sec) + ")"
                   val minTxt = String.format(Locale.US, "%d%%", Math.round(mc * 100.0).toInt())
 
                   rows.removeAllViews()
+
                   if (r.count == 0) {
-                      tvSummary.text = patt + "\nNo matches at >= " + minTxt +
-                          ". Try a lower minimum match, a shorter pattern, more history, or turn the volatility filter off."
+                      tvSummary.text = patt + "\nNo similar patterns found at all, even below " + minTxt +
+                          ". Try a shorter pattern, more history days, or a different timeframe."
+                      tvProjTitle.text = "Latest pattern"
+                      priceChart.setSeries(
+                          listOf(Series(snap.cur.toList(), Color.parseColor("#90CAF9"), 5f)),
+                          snap.cur.size, -1, true
+                      )
                       matchChart.setSeries(emptyList(), 0, -1, false)
                       histView.setData(IntArray(0), 0.0, 0.0)
                       tvHistTitle.text = ""
-                      tvStatus.text = "Updated " + SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
                       return
                   }
 
                   val flat = 100.0 - r.upPct - r.downPct
-                  tvSummary.text = patt + "\n" +
-                      "Matches >= " + minTxt + ": " + String.format(Locale.US, "%,d", r.count) + " (non-overlapping)\n" +
-                      String.format(Locale.US, "After them, %s: Up %.1f%% Down %.1f%% Flat %.1f%%\n", ahead, r.upPct, r.downPct, flat) +
-                      String.format(Locale.US, "Average %+.2f%% Median %+.2f%%\n", r.avg, r.median) +
-                      String.format(Locale.US, "Best %+.2f%% Worst %+.2f%%\n", r.best, r.worst) +
-                      String.format(Locale.US, "Avg peak %+.2f%% Avg dip %+.2f%% (within the window)", r.avgPeak, r.avgDip)
-
-                  val s = ArrayList<Series>()
-                  r.top.forEachIndexed { i, m ->
-                      s.add(Series(m.path, Color.parseColor(palette[i % palette.size]), 3f))
+                  val sb = StringBuilder()
+                  sb.append(patt).append("\n")
+                  if (r.fallback) {
+                      sb.append("No match reached ").append(minTxt).append(". Showing the ").append(r.count)
+                          .append(" closest matches instead (best ")
+                          .append(Math.round(r.bestCorr * 100.0)).append("%, weakest ")
+                          .append(Math.round(r.worstCorr * 100.0)).append("%).\n")
+                  } else {
+                      sb.append("Matches >= ").append(minTxt).append(": ")
+                          .append(String.format(Locale.US, "%,d", r.count)).append(" (non-overlapping)\n")
                   }
-                  s.add(Series(r.current, Color.WHITE, 6f))
-                  matchChart.setSeries(s, w + h, w - 1, false)
+                  if (snap.relaxed) sb.append("Volatility filter was relaxed to find matches.\n")
+                  sb.append(String.format(Locale.US, "After them, %s: Up %.1f%% Down %.1f%% Flat %.1f%%\n", ahead, r.upPct, r.downPct, flat))
+                  sb.append(String.format(Locale.US, "Average %+.2f%% Median %+.2f%%\n", r.avg, r.median))
+                  sb.append(String.format(Locale.US, "Best %+.2f%% Worst %+.2f%%\n", r.best, r.worst))
+                  sb.append(String.format(Locale.US, "Avg peak %+.2f%% Avg dip %+.2f%% (inside the window)\n", r.avgPeak, r.avgDip))
+                  sb.append("From live price $").append(fmt(p0)).append(": average $")
+                      .append(fmt(p0 * (1.0 + r.avg / 100.0)))
+                      .append(", middle half of cases $").append(fmt(p0 * (1.0 + r.p25 / 100.0)))
+                      .append(" to $").append(fmt(p0 * (1.0 + r.p75 / 100.0)))
+                  tvSummary.text = sb.toString()
 
-                  tvHistTitle.text = "Distribution of " + ahead + " moves (all " +
-                      String.format(Locale.US, "%,d", r.count) + " matches)"
+                  val ser = ArrayList<Series>()
+                  r.top.forEachIndexed { i, m ->
+                      val rebased = m.pctPath.map { p0 * (1.0 + it / 100.0) }
+                      ser.add(Series(rebased, Color.parseColor(palette[i % palette.size]), 2.5f, 0))
+                  }
+                  ser.add(Series(snap.cur.toList(), Color.parseColor("#90CAF9"), 5f, 0))
+                  if (r.avgPath.size > 1) {
+                      val avgProj = r.avgPath.map { p0 * (1.0 + it / 100.0) }
+                      ser.add(Series(avgProj, Color.WHITE, 6f, w - 1))
+                  }
+                  tvProjTitle.text = "Latest pattern vs matches, and projection (" + ahead + ")"
+                  priceChart.setSeries(ser, w + h, w - 1, true)
+
+                  val shape = ArrayList<Series>()
+                  r.top.forEachIndexed { i, m ->
+                      shape.add(Series(m.path, Color.parseColor(palette[i % palette.size]), 3f))
+                  }
+                  shape.add(Series(r.current, Color.WHITE, 6f))
+                  matchChart.setSeries(shape, w + h, w - 1, false)
+
+                  tvHistTitle.text = "Distribution of " + ahead + " moves (" +
+                      String.format(Locale.US, "%,d", r.count) + " cases)"
                   histView.setData(r.bins, r.binLo, r.binHi)
 
                   val dfm = SimpleDateFormat("dd MMM yyyy HH:mm", Locale.US)
@@ -1132,17 +1450,418 @@ jobs:
                       tv.setPadding(0, dp(4), 0, dp(4))
                       tv.text = String.format(
                           Locale.US,
-                          "#%d %d%% match %s next %d bars %+.2f%%",
+                          "#%d %d%% match %s next %d bars %+.2f%% (\$%s)",
                           i + 1,
                           Math.round(m.corr * 100.0).toInt(),
                           dfm.format(Date(m.timeSec * 1000)),
                           h,
-                          m.fwdPct
+                          m.fwdPct,
+                          fmt(p0 * (1.0 + m.fwdPct / 100.0))
                       )
                       rows.addView(tv)
                   }
+              }
+          }
+          EOF
 
-                  tvStatus.text = "Updated " + SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+          cat > android/app/src/main/java/com/ethusd/patternlab/MonitorService.kt <<'EOF'
+          package com.ethusd.patternlab
+
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.PendingIntent
+          import android.app.Service
+          import android.content.BroadcastReceiver
+          import android.content.Context
+          import android.content.Intent
+          import android.content.pm.ServiceInfo
+          import android.os.Build
+          import android.os.IBinder
+          import android.os.PowerManager
+          import java.util.Locale
+
+          class MonitorService : Service() {
+
+              private val chLive = "live"
+              private val chAlert = "alerts"
+              private var lastNotifyMs = 0L
+              private var lastDir = 99
+              private var lastSnap: Snapshot? = null
+              private var wl: PowerManager.WakeLock? = null
+              private val listener: () -> Unit = { onUpdate() }
+
+              companion object {
+                  fun start(ctx: Context) {
+                      val i = Intent(ctx, MonitorService::class.java)
+                      if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+                  }
+
+                  fun stop(ctx: Context) {
+                      ctx.stopService(Intent(ctx, MonitorService::class.java))
+                  }
+              }
+
+              override fun onBind(intent: Intent?): IBinder? = null
+
+              override fun onCreate() {
+                  super.onCreate()
+                  makeChannels()
+                  val n = build("Pattern monitor starting...", "Loading history", chLive)
+                  if (Build.VERSION.SDK_INT >= 34) {
+                      startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                  } else {
+                      startForeground(1, n)
+                  }
+                  try {
+                      val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                      wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "patternlab:monitor")
+                      wl?.acquire()
+                  } catch (e: Exception) {
+                  }
+                  LiveEngine.addListener(listener)
+                  LiveEngine.start(applicationContext, Prefs.load(this))
+              }
+
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+
+              override fun onDestroy() {
+                  LiveEngine.removeListener(listener)
+                  if (!LiveEngine.uiVisible) LiveEngine.stop()
+                  try {
+                      wl?.release()
+                  } catch (e: Exception) {
+                  }
+                  super.onDestroy()
+              }
+
+              private fun makeChannels() {
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      val nm = getSystemService(NotificationManager::class.java)
+                      nm.createNotificationChannel(
+                          NotificationChannel(chLive, "Live pattern monitor", NotificationManager.IMPORTANCE_LOW)
+                      )
+                      nm.createNotificationChannel(
+                          NotificationChannel(chAlert, "Pattern alerts", NotificationManager.IMPORTANCE_HIGH)
+                      )
+                  }
+              }
+
+              @Suppress("DEPRECATION")
+              private fun builder(ch: String): Notification.Builder =
+                  if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, ch) else Notification.Builder(this)
+
+              private fun build(title: String, text: String, ch: String): Notification {
+                  val open = PendingIntent.getActivity(
+                      this, 0, Intent(this, MainActivity::class.java),
+                      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                  )
+                  val b = builder(ch)
+                      .setSmallIcon(R.drawable.ic_stat)
+                      .setContentTitle(title)
+                      .setContentText(text.substringBefore("\n"))
+                      .setStyle(Notification.BigTextStyle().bigText(text))
+                      .setContentIntent(open)
+                      .setOnlyAlertOnce(true)
+                  if (ch == chLive) b.setOngoing(true) else b.setAutoCancel(true)
+                  return b.build()
+              }
+
+              private fun fmt(d: Double): String = String.format(Locale.US, "%,.2f", d)
+
+              private fun onUpdate() {
+                  val now = System.currentTimeMillis()
+                  val snap = LiveEngine.snapshot
+                  val tk = LiveEngine.ticker
+                  val fresh = snap !== lastSnap
+                  if (!fresh && now - lastNotifyMs < 3000L) return
+                  lastNotifyMs = now
+                  lastSnap = snap
+
+                  val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                  val priceTxt = if (tk != null && !tk.last.isNaN()) "$" + fmt(tk.last) else ""
+
+                  if (snap == null) {
+                      nm.notify(1, build("Pattern monitor " + priceTxt, LiveEngine.status, chLive))
+                      return
+                  }
+
+                  val s = snap.settings
+                  val r = snap.result
+                  val tf = Cfg.tfNames[s.tfIdx]
+                  val tfSec = Cfg.tfSecs[s.tfIdx]
+                  val sb = StringBuilder()
+                  sb.append("Timeframe ").append(tf)
+                      .append(" 路 Pattern ").append(s.win).append(" bars (").append(Cfg.human(s.win * tfSec)).append(")")
+                      .append(" 路 Predict next ").append(s.hor).append(" bars (").append(Cfg.human(s.hor * tfSec)).append(")\n")
+                  if (r.count == 0) {
+                      sb.append("No similar cases found yet")
+                  } else {
+                      sb.append("Cases ").append(r.count)
+                          .append(" 路 Positive ").append(String.format(Locale.US, "%.1f%%", r.upPct))
+                          .append(" 路 Negative ").append(String.format(Locale.US, "%.1f%%", r.downPct)).append("\n")
+                      sb.append(String.format(Locale.US, "Average %+.2f%% 路 Median %+.2f%%", r.avg, r.median))
+                      if (r.fallback) {
+                          sb.append("\nNo case reached ").append(Math.round(Cfg.corrValues[s.corrIdx] * 100.0))
+                              .append("%, showing closest ones")
+                      }
+                  }
+                  nm.notify(1, build(s.symbol + " " + priceTxt + " 路 live", sb.toString(), chLive))
+
+                  if (fresh) {
+                      val dir = if (r.fallback || r.count < 5) 0
+                      else if (r.upPct >= 60.0) 1
+                      else if (r.downPct >= 60.0) -1
+                      else 0
+                      if (s.notifyBias && lastDir != 99 && dir != lastDir && dir != 0) {
+                          val word = if (dir > 0) "Positive" else "Negative"
+                          val pct = if (dir > 0) r.upPct else r.downPct
+                          val msg = String.format(
+                              Locale.US,
+                              "%.0f%% of %d similar cases moved %s in the next %s (%s timeframe, %d-bar pattern)",
+                              pct, r.count, if (dir > 0) "up" else "down", Cfg.human(s.hor * tfSec), tf, s.win
+                          )
+                          nm.notify(2, build(s.symbol + " bias: " + word, msg, chAlert))
+                      }
+                      lastDir = dir
+                  }
+              }
+          }
+
+          class BootReceiver : BroadcastReceiver() {
+              override fun onReceive(context: Context, intent: Intent) {
+                  if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+                      try {
+                          if (Prefs.load(context).monitor) MonitorService.start(context)
+                      } catch (e: Exception) {
+                      }
+                  }
+              }
+          }
+          EOF
+
+          cat > android/app/src/main/java/com/ethusd/patternlab/PatternEngine.kt <<'EOF'
+          package com.ethusd.patternlab
+
+          import kotlin.math.abs
+          import kotlin.math.max
+          import kotlin.math.min
+          import kotlin.math.sqrt
+
+          class Match(
+              val start: Int,
+              val timeSec: Long,
+              val corr: Double,
+              val fwdPct: Double,
+              val path: List<Double>,
+              val pctPath: List<Double>
+          )
+
+          class Result(
+              val current: List<Double>,
+              val top: List<Match>,
+              val count: Int,
+              val fallback: Boolean,
+              val bestCorr: Double,
+              val worstCorr: Double,
+              val scanned: Int,
+              val upPct: Double,
+              val downPct: Double,
+              val avg: Double,
+              val median: Double,
+              val p25: Double,
+              val p75: Double,
+              val best: Double,
+              val worst: Double,
+              val avgPeak: Double,
+              val avgDip: Double,
+              val avgPath: List<Double>,
+              val bins: IntArray,
+              val binLo: Double,
+              val binHi: Double
+          ) {
+              companion object {
+                  fun empty(current: List<Double> = emptyList(), scanned: Int = 0): Result =
+                      Result(
+                          current, emptyList(), 0, false, 0.0, 0.0, scanned,
+                          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                          emptyList(), IntArray(0), 0.0, 0.0
+                      )
+              }
+          }
+
+          object PatternEngine {
+
+              // Recent bars count more than old bars inside the pattern window.
+              fun weights(w: Int): DoubleArray =
+                  DoubleArray(w) { 0.4 + 0.6 * it / (w - 1).toDouble() }
+
+              /** * Slides the latest `w` bars over every earlier window of the history. * Each window is shape-normalised (z-score) and compared with the latest * pattern using a recency-weighted squared distance: * similarity = 1 - weightedMeanSquaredDiff / 2 * With equal weights this equals the Pearson correlation. */
+              fun find( closes: DoubleArray, times: LongArray, w: Int, h: Int, minCorr: Double, volFilter: Boolean, topK: Int, progress: (Int) -> Unit ): Result {
+                  val n = closes.size
+                  val lastStart = min(n - w - h, n - 2 * w)
+                  if (n < 10 || w < 3 || lastStart < 0) return Result.empty()
+
+                  val base = closes[n / 2]
+                  val y = DoubleArray(n) { closes[it] - base }
+                  val p1 = DoubleArray(n + 1)
+                  val p2 = DoubleArray(n + 1)
+                  for (i in 0 until n) {
+                      p1[i + 1] = p1[i] + y[i]
+                      p2[i + 1] = p2[i] + y[i] * y[i]
+                  }
+
+                  var cm = 0.0
+                  for (j in 0 until w) cm += y[n - w + j]
+                  cm /= w
+                  var cv = 0.0
+                  for (j in 0 until w) {
+                      val d = y[n - w + j] - cm
+                      cv += d * d
+                  }
+                  val cstd = sqrt(cv / w)
+                  if (cstd < 1e-9) return Result.empty()
+                  val cz = DoubleArray(w) { (y[n - w + it] - cm) / cstd }
+                  val curRel = cstd / max(abs(cm + base), 1e-9)
+                  val curList = cz.toList()
+
+                  val wts = weights(w)
+                  var sumW = 0.0
+                  var sumWaz = 0.0
+                  var waz2 = 0.0
+                  val waz = DoubleArray(w)
+                  for (j in 0 until w) {
+                      sumW += wts[j]
+                      waz[j] = wts[j] * cz[j]
+                      sumWaz += waz[j]
+                      waz2 += wts[j] * cz[j] * cz[j]
+                  }
+
+                  val scanned = lastStart + 1
+                  val floor = min(minCorr, 0.5)
+                  val step = max(1, scanned / 50)
+
+                  val idx = ArrayList<Int>()
+                  val cor = ArrayList<Double>()
+                  for (s in 0..lastStart) {
+                      if (s % step == 0) progress((s.toLong() * 100L / scanned).toInt())
+                      val sum1 = p1[s + w] - p1[s]
+                      val sum2 = p2[s + w] - p2[s]
+                      val mean = sum1 / w
+                      val v = sum2 / w - mean * mean
+                      if (v <= 1e-12) continue
+                      val std = sqrt(v)
+                      if (volFilter) {
+                          val rel = std / max(abs(mean + base), 1e-9)
+                          val ratio = rel / max(curRel, 1e-12)
+                          if (ratio < 0.6 || ratio > 1.67) continue
+                      }
+                      var dotAz = 0.0
+                      var sy = 0.0
+                      var syy = 0.0
+                      for (j in 0 until w) {
+                          val yv = y[s + j]
+                          dotAz += waz[j] * yv
+                          sy += wts[j] * yv
+                          syy += wts[j] * yv * yv
+                      }
+                      val sw = syy - 2.0 * mean * sy + mean * mean * sumW
+                      val d2 = (waz2 - 2.0 * (dotAz - mean * sumWaz) / std + sw / (std * std)) / sumW
+                      val sim = 1.0 - d2 / 2.0
+                      if (sim >= floor) {
+                          idx.add(s)
+                          cor.add(sim)
+                      }
+                  }
+                  progress(100)
+                  if (idx.isEmpty()) return Result.empty(curList, scanned)
+
+                  val order = idx.indices.sortedByDescending { cor[it] }
+                  val blocked = BooleanArray(n)
+                  val picked = ArrayList<Int>()
+                  for (k in order) {
+                      val s = idx[k]
+                      if (blocked[s]) continue
+                      picked.add(k)
+                      val a = max(0, s - w + 1)
+                      val b = min(n - 1, s + w - 1)
+                      for (q in a..b) blocked[q] = true
+                      if (picked.size >= 5000) break
+                  }
+
+                  var qualified = 0
+                  for (k in picked) {
+                      if (cor[k] >= minCorr) qualified++ else break
+                  }
+                  val fallback = qualified == 0
+                  val m = if (fallback) min(20, picked.size) else qualified
+
+                  val fwd = DoubleArray(m)
+                  val peak = DoubleArray(m)
+                  val dip = DoubleArray(m)
+                  val avgSum = DoubleArray(h + 1)
+                  var up = 0
+                  var down = 0
+                  for (i in 0 until m) {
+                      val s = idx[picked[i]]
+                      val b = closes[s + w - 1]
+                      var pk = 0.0
+                      var dp = 0.0
+                      for (j in 1..h) {
+                          val pc = (closes[s + w - 1 + j] / b - 1.0) * 100.0
+                          avgSum[j] += pc
+                          if (pc > pk) pk = pc
+                          if (pc < dp) dp = pc
+                      }
+                      val f = (closes[s + w - 1 + h] / b - 1.0) * 100.0
+                      fwd[i] = f
+                      peak[i] = pk
+                      dip[i] = dp
+                      if (f > 0) up++
+                      if (f < 0) down++
+                  }
+                  val avgPath = (0..h).map { avgSum[it] / m }
+
+                  val sorted = fwd.sortedArray()
+                  val median = if (m % 2 == 1) sorted[m / 2] else (sorted[m / 2 - 1] + sorted[m / 2]) / 2.0
+                  val p25 = sorted[((m - 1) * 0.25).toInt()]
+                  val p75 = sorted[((m - 1) * 0.75).toInt()]
+                  val lo = sorted[0]
+                  var hi = sorted[m - 1]
+                  if (hi - lo < 1e-9) hi = lo + 1e-6
+                  val nb = 15
+                  val bins = IntArray(nb)
+                  for (v in fwd) {
+                      val bi = ((v - lo) / (hi - lo) * nb).toInt().coerceIn(0, nb - 1)
+                      bins[bi]++
+                  }
+
+                  val top = ArrayList<Match>()
+                  for (i in 0 until min(topK, m)) {
+                      val k = picked[i]
+                      val s = idx[k]
+                      var mean = 0.0
+                      for (j in 0 until w) mean += closes[s + j]
+                      mean /= w
+                      var vv = 0.0
+                      for (j in 0 until w) {
+                          val d = closes[s + j] - mean
+                          vv += d * d
+                      }
+                      val std = max(sqrt(vv / w), 1e-9)
+                      val path = (0 until w + h).map { (closes[s + it] - mean) / std }
+                      val b = closes[s + w - 1]
+                      val pp = (0 until w + h).map { (closes[s + it] / b - 1.0) * 100.0 }
+                      top.add(Match(s, times[s + w - 1], cor[k], fwd[i], path, pp))
+                  }
+
+                  return Result(
+                      curList, top, m, fallback, cor[picked[0]], cor[picked[m - 1]], scanned,
+                      up * 100.0 / m, down * 100.0 / m,
+                      fwd.average(), median, p25, p75, sorted[m - 1], sorted[0],
+                      peak.average(), dip.average(),
+                      avgPath, bins, lo, hi
+                  )
               }
           }
           EOF
