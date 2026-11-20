@@ -1,8 +1,9 @@
 name: Build LevelFit Android APK
 
-on:
+'on':
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -29,47 +30,31 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Prepare LevelFit web app
-        shell: bash
-        run: | set -euo pipefail HTML_FILE="LevelFit_Hunter_Ascension_V4_4.html" 
-          if [ ! -f "$HTML_FILE" ]; then
-            echo "ERROR: $HTML_FILE was not found in the repository root."
-            echo "Upload the LevelFit HTML file to the root, or edit HTML_FILE here."
-            exit 1
-          fi
+      - name: Check LevelFit HTML file
+        run: test -f LevelFit_Hunter_Ascension_V4_4.html
 
-          mkdir -p www
-          cp "$HTML_FILE" www/index.html
+      - name: Prepare web app folder
+        run: mkdir -p www && cp LevelFit_Hunter_Ascension_V4_4.html www/index.html
 
-          cat > package.json <<'EOF'
-          {
-            "name": "levelfit-android",
-            "version": "1.0.0",
-            "private": true,
-            "description": "LevelFit offline fitness RPG Android app"
-          }
-          EOF
+      - name: Create package.json
+        run: node -e "require('fs').writeFileSync('package.json', JSON.stringify({name:'levelfit-android',version:'1.0.0',private:true},null,2))"
 
-          cat > capacitor.config.json <<'EOF'
-          {
-            "appId": "com.levelfit.hunterascension",
-            "appName": "LevelFit",
-            "webDir": "www",
-            "bundledWebRuntime": false
-          }
-          EOF
+      - name: Create Capacitor configuration
+        run: node -e "require('fs').writeFileSync('capacitor.config.json', JSON.stringify({appId:'com.levelfit.hunterascension',appName:'LevelFit',webDir:'www'},null,2))"
 
       - name: Install Capacitor
-        run: | npm install @capacitor/core@8.6.2 @capacitor/android@8.6.2 npm install --save-dev @capacitor/cli@8.6.2 
+        run: npm install @capacitor/core@8.6.2 @capacitor/android@8.6.2 @capacitor/cli@8.6.2
+
       - name: Create Android project
         run: npx cap add android
 
-      - name: Copy web app into Android project
+      - name: Sync web app
         run: npx cap sync android
 
       - name: Build debug APK
         working-directory: android
-        run: | chmod +x gradlew ./gradlew assembleDebug 
+        run: chmod +x gradlew && ./gradlew assembleDebug
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
